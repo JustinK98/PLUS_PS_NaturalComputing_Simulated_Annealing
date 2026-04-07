@@ -31,6 +31,7 @@ from configs import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_BENCHMARK,
     DEFAULT_EPOCHS,
+    DEFAULT_GUI_APP_MODE,
     DEFAULT_LAYOUT,
     DEFAULT_LEARNING_RATE,
     DEFAULT_NEIGHBOR_PREVIEW,
@@ -44,6 +45,7 @@ from configs import (
     ModelConfig,
     SUPPORTED_ACTIVATIONS,
     SUPPORTED_BENCHMARKS,
+    SUPPORTED_GUI_APP_MODES,
     SUPPORTED_GUI_LANGUAGES,
     SUPPORTED_GUI_MODES,
     TrainingConfig,
@@ -78,6 +80,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--gui",
         action="store_true",
         help="Starte die didaktische GUI statt des reinen Terminal-Modus.",
+    )
+    parser.add_argument(
+        "--gui-app-mode",
+        choices=SUPPORTED_GUI_APP_MODES,
+        default=DEFAULT_GUI_APP_MODE,
+        help=(
+            "Arbeitsmodus der GUI: demo fuer Verstehen/Visualisieren, "
+            "playground fuer Simulated Annealing."
+        ),
     )
     parser.add_argument(
         "--gui-mode",
@@ -493,6 +504,16 @@ def _run_interactive_setup(
     )
 
     if args.gui:
+        args.gui_app_mode = _prompt_choice(
+            label="GUI-Arbeitsmodus",
+            explanation=(
+                "demo ist fuer Verstehen, Visualisieren und schrittweises Training gedacht.\n"
+                "playground erweitert dieselbe Codebasis um Simulated Annealing und eine "
+                "sichtbare Optimierung ueber Aktivierungs-Layouts."
+            ),
+            options=SUPPORTED_GUI_APP_MODES,
+            default=args.gui_app_mode,
+        )
         args.gui_mode = _prompt_choice(
             label="GUI-Modus",
             explanation=(
@@ -501,6 +522,15 @@ def _run_interactive_setup(
             ),
             options=SUPPORTED_GUI_MODES,
             default=args.gui_mode,
+        )
+        args.gui_language = _prompt_choice(
+            label="GUI-Sprache",
+            explanation=(
+                "Die GUI kann vollstaendig auf Deutsch oder Englisch laufen. "
+                "Das betrifft Labels, Hilfetexte, Info-Boxen und die Lernanleitung."
+            ),
+            options=SUPPORTED_GUI_LANGUAGES,
+            default=args.gui_language,
         )
         args.save_prefix = None
         args.no_plot = True
@@ -652,7 +682,9 @@ def _build_summary_lines(
         f"Weight-Scale:        {args.weight_scale}",
         f"Seed:                {args.seed}",
         f"GUI-Modus:           {'ja' if args.gui else 'nein'}",
+        f"GUI-Arbeitsmodus:    {args.gui_app_mode if args.gui else '-'}",
         f"GUI-Ansicht:         {args.gui_mode if args.gui else '-'}",
+        f"GUI-Sprache:         {args.gui_language if args.gui else '-'}",
         f"Plots speichern:     {args.save_prefix if args.save_prefix else 'nein'}",
     ]
 
@@ -831,6 +863,7 @@ def _launch_gui(args: argparse.Namespace) -> None:
         gui_config = GuiExperimentConfig(
             benchmark=args.benchmark,
             hidden_sizes=hidden_sizes,
+            app_mode=args.gui_app_mode,
             layout_spec=args.layout,
             epochs=args.epochs,
             learning_rate=args.lr,

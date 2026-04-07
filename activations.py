@@ -430,6 +430,103 @@ def generate_single_step_neighbors(layout: ActivationLayout) -> list[NeighborRes
     return neighbors
 
 
+def generate_fill_layer_neighbors(layout: ActivationLayout) -> list[NeighborResult]:
+    """Erzeugt Nachbarn, die jeweils einen kompletten Layer vereinheitlichen."""
+
+    neighbors: list[NeighborResult] = []
+    for layer_index, layer in enumerate(layout.layers):
+        for candidate in SUPPORTED_ACTIVATIONS:
+            if all(activation_name == candidate for activation_name in layer):
+                continue
+            changed_positions = [
+                neuron_index
+                for neuron_index, activation_name in enumerate(layer)
+                if activation_name != candidate
+            ]
+            changes = tuple(
+                LayoutChange(
+                    layer_index=layer_index,
+                    neuron_index=neuron_index,
+                    before=layer[neuron_index],
+                    after=candidate,
+                    operation="fill_layer",
+                )
+                for neuron_index in changed_positions
+            )
+            neighbors.append(
+                NeighborResult(
+                    label=f"fill:L{layer_index + 1}:{candidate}",
+                    layout=layout.replace_layer(layer_index, candidate),
+                    changes=changes,
+                )
+            )
+    return neighbors
+
+
+def generate_swap_neighbors(layout: ActivationLayout) -> list[NeighborResult]:
+    """Erzeugt Nachbarn, die zwei Aktivierungen innerhalb eines Layers tauschen."""
+
+    neighbors: list[NeighborResult] = []
+    for layer_index, layer in enumerate(layout.layers):
+        for first_index in range(len(layer)):
+            for second_index in range(first_index + 1, len(layer)):
+                if layer[first_index] == layer[second_index]:
+                    continue
+                neighbors.append(
+                    NeighborResult(
+                        label=f"swap:L{layer_index + 1}:{first_index}:{second_index}",
+                        layout=layout.swap_neurons(layer_index, first_index, second_index),
+                        changes=(
+                            LayoutChange(
+                                layer_index=layer_index,
+                                neuron_index=first_index,
+                                before=layer[first_index],
+                                after=layer[second_index],
+                                operation="swap",
+                            ),
+                            LayoutChange(
+                                layer_index=layer_index,
+                                neuron_index=second_index,
+                                before=layer[second_index],
+                                after=layer[first_index],
+                                operation="swap",
+                            ),
+                        ),
+                    )
+                )
+    return neighbors
+
+
+def generate_neighbors(
+    layout: ActivationLayout,
+    operations: Sequence[str],
+) -> list[NeighborResult]:
+    """Erzeugt Nachbarn fuer ausgewaehlte Nachbarschaftstypen.
+
+    Unterstuetzte Operationen:
+    - `set_neuron`: ein einzelnes Neuron auf eine andere Aktivierung setzen
+    - `fill_layer`: einen kompletten Layer auf eine Aktivierung setzen
+    - `swap_neurons`: zwei Aktivierungen im selben Layer tauschen
+    """
+
+    supported_operations = {"set_neuron", "fill_layer", "swap_neurons"}
+    normalized_operations = tuple(dict.fromkeys(operation for operation in operations if operation))
+    invalid_operations = [operation for operation in normalized_operations if operation not in supported_operations]
+    if invalid_operations:
+        raise ValueError(
+            "Unbekannte Nachbarschaftstypen: " + ", ".join(invalid_operations)
+        )
+
+    neighbors: list[NeighborResult] = []
+    if "set_neuron" in normalized_operations:
+        neighbors.extend(generate_single_step_neighbors(layout))
+    if "fill_layer" in normalized_operations:
+        neighbors.extend(generate_fill_layer_neighbors(layout))
+    if "swap_neurons" in normalized_operations:
+        neighbors.extend(generate_swap_neighbors(layout))
+    return neighbors
+
+
 def _parse_layer_spec(layer_spec: str, layer_size: int) -> list[str]:
     """Parst die Spezifikation eines einzelnen Hidden-Layers."""
 

@@ -55,13 +55,33 @@ from activations import (
     ACTIVATIONS,
     ActivationLayout,
     diff_layouts,
+    generate_neighbors,
     generate_single_step_neighbors,
     parse_layout_spec,
 )
+from annealing import AnnealingConfig, AnnealingState, AnnealingStep, annealing_stop_reasons
+from annealing_objectives import (
+    ObjectiveConfig,
+    ObjectiveEvaluation,
+    SUPPORTED_OBJECTIVES,
+    LayoutObjectiveEvaluator,
+)
+from annealing_runner import AnnealingRunner
+from annealing_schedules import SUPPORTED_COOLING_SCHEDULES
 from benchmarks import DatasetBundle, describe_dataset, load_benchmark
 from configs import (
+    DEFAULT_ANNEALING_CANDIDATE_EPOCHS,
+    DEFAULT_ANNEALING_COOLING_PARAMETER,
+    DEFAULT_ANNEALING_COOLING_SCHEDULE,
+    DEFAULT_ANNEALING_ITERATIONS_PER_TEMPERATURE,
+    DEFAULT_ANNEALING_MAX_STEPS,
+    DEFAULT_ANNEALING_MIN_TEMPERATURE,
+    DEFAULT_ANNEALING_NEIGHBORHOODS,
+    DEFAULT_ANNEALING_OBJECTIVE,
+    DEFAULT_ANNEALING_START_TEMPERATURE,
     DEFAULT_BATCH_SIZE,
     DEFAULT_EPOCHS,
+    DEFAULT_GUI_APP_MODE,
     DEFAULT_LAYOUT,
     DEFAULT_LEARNING_RATE,
     DEFAULT_RANDOM_SEED,
@@ -71,6 +91,7 @@ from configs import (
     MIN_HIDDEN_LAYERS,
     SUPPORTED_ACTIVATIONS,
     SUPPORTED_BENCHMARKS,
+    SUPPORTED_GUI_APP_MODES,
     SUPPORTED_GUI_LANGUAGES,
     SUPPORTED_GUI_MODES,
     TrainingConfig,
@@ -78,6 +99,7 @@ from configs import (
     format_hidden_sizes,
 )
 from model import ModularMLP, NeuronInspection, SampleTrace
+from terminal_viz import render_layout, render_layout_diff
 from trainer import TrainingResult, train_model
 
 
@@ -101,6 +123,10 @@ ANALYSIS_TARGET_COLOR = "#0f766e"
 MANUAL_DIGIT_VALUES = (0.0, 4.0, 8.0, 12.0, 16.0)
 
 LANGUAGE_LABELS = {"de": "Deutsch", "en": "English"}
+APP_MODE_LABELS = {
+    "de": {"demo": "Demo Mode", "playground": "Playground Mode"},
+    "en": {"demo": "Demo Mode", "playground": "Playground Mode"},
+}
 MODE_LABELS = {
     "de": {"beginner": "Einsteiger", "expert": "Experte"},
     "en": {"beginner": "Beginner", "expert": "Expert"},
@@ -112,11 +138,12 @@ GUI_TEXTS = {
         "info_dialog_title": "Info",
         "guide_window_title": "Anleitung zum Activation Playground",
         "mode_frame_title": "Modus und Sprache",
+        "app_mode_label": "Arbeitsmodus",
         "mode_hint": (
-            "Im Einsteiger-Modus bleiben nur die wichtigsten Schritte sichtbar. "
-            "Im Experten-Modus erscheinen variable Layer, Layout-Eingriffe und Vergleichswerkzeuge."
+            "Waehle zuerst den Arbeitsmodus: Demo Mode fuer Verstehen und Training, Playground Mode "
+            "fuer Simulated Annealing. Die Detailstufe bestimmt danach, wie viele Werkzeuge sichtbar sind."
         ),
-        "mode_label": "Modus",
+        "mode_label": "Detailstufe",
         "language_label": "Sprache",
         "workflow_frame_title": "Lernfluss",
         "guide_button": "Anleitung oeffnen",
@@ -173,9 +200,53 @@ GUI_TEXTS = {
         "train_n_button": "N Epochen trainieren",
         "save_baseline_button": "Als Baseline speichern",
         "refresh_view_button": "Nur Ansicht aktualisieren",
+        "objective_frame_title": "3. Ziel und Bewertung",
+        "objective_hint": (
+            "Hier legst du fest, wie ein Layout fuer Simulated Annealing bewertet wird. "
+            "Jeder Kandidat wird dazu kurz trainiert und auf der Validation gemessen."
+        ),
+        "objective_label": "Zielmetrik",
+        "candidate_epochs_label": "Epochen pro Kandidat",
+        "shuffle_label": "Trainingsdaten mischen",
+        "neighborhood_frame_title": "4. Suchraum und Nachbarschaft",
+        "neighborhood_hint": (
+            "Nachbarn sind kleine Veraenderungen des Aktivierungs-Layouts. Simulated Annealing "
+            "bewegt sich durch genau solche lokalen Aenderungen durch den Suchraum."
+        ),
+        "neighbor_set_label": "Einzelnes Neuron aendern",
+        "neighbor_fill_label": "Ganzen Layer fuellen",
+        "neighbor_swap_label": "Zwei Neuronen tauschen",
+        "annealing_frame_title": "5. Annealing-Konfiguration",
+        "annealing_hint": (
+            "Die Temperatur steuert, wie risikofreudig die Suche ist. Hohe Temperaturen lassen "
+            "auch schlechtere Kandidaten eher zu, niedrige Temperaturen machen die Suche strenger."
+        ),
+        "start_temperature_label": "Starttemperatur",
+        "cooling_schedule_label": "Abkuehlung",
+        "cooling_parameter_label": "Cooling-Parameter",
+        "iterations_per_temperature_label": "Iterationen pro Temperatur",
+        "max_steps_label": "Maximale Schritte",
+        "min_temperature_label": "Mindesttemperatur",
+        "run_frame_title": "6. Laufsteuerung",
+        "run_hint": (
+            "Du kannst den Suchlauf schrittweise oder komplett ausfuehren. Jeder Schritt zeigt, "
+            "welcher Nachbar vorgeschlagen wurde und warum er akzeptiert oder verworfen wurde."
+        ),
+        "evaluate_start_button": "Startzustand bewerten",
+        "anneal_step_button": "1 SA-Schritt",
+        "anneal_10_button": "10 SA-Schritte",
+        "anneal_run_button": "Bis Ende laufen",
+        "anneal_reset_button": "Suche zuruecksetzen",
         "status_frame_title": "4. Live-Status",
+        "anneal_status_frame_title": "7. Annealing-Status",
         "summary_frame_title": "Was passiert gerade?",
         "canvas_frame_title": "Netzwerk-Visualisierung",
+        "network_toolbar_hint": (
+            "Diese Hilfen erklaeren direkt an der Netzansicht, wie Knoten, Linien, Farben "
+            "und die Aktivierungskurve zu lesen sind."
+        ),
+        "network_info_button": "Netz lesen",
+        "activation_curve_info_button": "Kurve lesen",
         "live_inspection_title": "Live-Neuron-Inspektion",
         "live_inspection_hint": (
             "Klicke im Netz auf ein Hidden-Neuron. Rechts erscheint sofort dessen lokale "
@@ -187,6 +258,7 @@ GUI_TEXTS = {
         "tab_stepper": "Forward/Backward",
         "tab_detail": "Neuron-Inspektion",
         "tab_compare": "Vergleich",
+        "tab_annealing": "Annealing",
         "tab_help": "Lernhilfe",
         "input_tab_hint": (
             "Dieser Tab zeigt, was gerade in das Netz eingespeist wird. Bei digits siehst du die "
@@ -218,6 +290,19 @@ GUI_TEXTS = {
             "Die Plots zeigen sowohl die Trainingsgeschichte als auch den aktuellen Zustand des "
             "ausgewaehlten Samples. Training aendert Gewichte, nicht die gezeigte Sample-Auswahl."
         ),
+        "plot_info_hint": (
+            "Zu jedem Plot gibt es eine eigene Kurz-Erklaerung. So laesst sich direkt ablesen, "
+            "was Achsen, Farben und Werte bedeuten."
+        ),
+        "plot_overview_info_button": "Plot-Ueberblick",
+        "loss_plot_info_button": "Loss",
+        "accuracy_plot_info_button": "Accuracy",
+        "probability_plot_info_button": "Wahrscheinlichkeiten",
+        "sample_activation_plot_info_button": "Sample-Aktivierungen",
+        "annealing_tab_hint": (
+            "Dieser Tab zeigt den Suchverlauf des Simulated Annealing: aktueller Zustand, "
+            "Kandidat, bester Zustand, Temperatur und Verlauf der Optimierung."
+        ),
         "stepper_tab_hint": (
             "Dieser Tab zerlegt den aktuellen Forward- und Backward-Pass fuer genau das sichtbare "
             "Sample in einzelne didaktische Schritte."
@@ -233,7 +318,10 @@ GUI_TEXTS = {
             "Dieselbe Neuron-Inspektion wie rechts neben der Netzwerkansicht, aber mit mehr Platz "
             "zum Lesen und Scrollen."
         ),
-        "guide_link_text": "Die ausfuehrliche Anleitung erklaert Aufbau, typische Arbeitsweise und die wichtigsten Begriffe des Programms.",
+        "guide_link_text": (
+            "Die ausfuehrliche Anleitung erklaert Demo Mode, Playground Mode, "
+            "Simulated Annealing, typische Arbeitsweisen und die wichtigsten Begriffe."
+        ),
         "target_auto_label": "(echtes Ziel)",
         "target_none_label": "(kein Ziel)",
         "max_layers_title": "Maximale Layerzahl erreicht",
@@ -242,6 +330,7 @@ GUI_TEXTS = {
         "min_layers_message": "Das Lernmodell benoetigt mindestens einen Hidden-Layer.",
         "load_error_title": "Experiment konnte nicht geladen werden",
         "train_error_title": "Training fehlgeschlagen",
+        "annealing_error_title": "Simulated Annealing fehlgeschlagen",
         "guide_intro_title": "Anleitung",
     },
     "en": {
@@ -249,11 +338,12 @@ GUI_TEXTS = {
         "info_dialog_title": "Info",
         "guide_window_title": "Activation Playground Guide",
         "mode_frame_title": "Mode and Language",
+        "app_mode_label": "Workspace",
         "mode_hint": (
-            "Beginner mode keeps only the essential steps visible. Expert mode unlocks "
-            "variable layers, layout interventions, and comparison tools."
+            "Choose the workspace first: Demo Mode for understanding and training, Playground Mode "
+            "for simulated annealing. The detail level then controls how many tools stay visible."
         ),
-        "mode_label": "Mode",
+        "mode_label": "Detail Level",
         "language_label": "Language",
         "workflow_frame_title": "Learning Flow",
         "guide_button": "Open Guide",
@@ -310,9 +400,53 @@ GUI_TEXTS = {
         "train_n_button": "Train N Epochs",
         "save_baseline_button": "Store as Baseline",
         "refresh_view_button": "Refresh View Only",
+        "objective_frame_title": "3. Objective and Evaluation",
+        "objective_hint": (
+            "Choose how a layout is scored for simulated annealing. Each candidate is trained "
+            "briefly and then measured on the validation split."
+        ),
+        "objective_label": "Objective",
+        "candidate_epochs_label": "Epochs per Candidate",
+        "shuffle_label": "Shuffle Training Data",
+        "neighborhood_frame_title": "4. Search Space and Neighborhood",
+        "neighborhood_hint": (
+            "Neighbors are small changes to the activation layout. Simulated annealing explores "
+            "the search space by moving through exactly these local modifications."
+        ),
+        "neighbor_set_label": "Change one neuron",
+        "neighbor_fill_label": "Fill whole layer",
+        "neighbor_swap_label": "Swap two neurons",
+        "annealing_frame_title": "5. Annealing Configuration",
+        "annealing_hint": (
+            "Temperature controls how risk-seeking the search is. High temperatures make it easier "
+            "to accept worse candidates, low temperatures make the search stricter."
+        ),
+        "start_temperature_label": "Start Temperature",
+        "cooling_schedule_label": "Cooling Schedule",
+        "cooling_parameter_label": "Cooling Parameter",
+        "iterations_per_temperature_label": "Iterations per Temperature",
+        "max_steps_label": "Maximum Steps",
+        "min_temperature_label": "Minimum Temperature",
+        "run_frame_title": "6. Run Control",
+        "run_hint": (
+            "You can execute the search step by step or run it to completion. Each step explains "
+            "which neighbor was proposed and why it was accepted or rejected."
+        ),
+        "evaluate_start_button": "Evaluate Start State",
+        "anneal_step_button": "1 SA Step",
+        "anneal_10_button": "10 SA Steps",
+        "anneal_run_button": "Run to Completion",
+        "anneal_reset_button": "Reset Search",
         "status_frame_title": "4. Live Status",
+        "anneal_status_frame_title": "7. Annealing Status",
         "summary_frame_title": "What is happening right now?",
         "canvas_frame_title": "Network Visualization",
+        "network_toolbar_hint": (
+            "These helpers explain right next to the network view how to read nodes, lines, "
+            "colors, and the activation curve."
+        ),
+        "network_info_button": "Read Network",
+        "activation_curve_info_button": "Read Curve",
         "live_inspection_title": "Live Neuron Inspection",
         "live_inspection_hint": (
             "Click a hidden neuron in the network. Its local computation immediately appears on "
@@ -324,6 +458,7 @@ GUI_TEXTS = {
         "tab_stepper": "Forward/Backward",
         "tab_detail": "Neuron Inspection",
         "tab_compare": "Comparison",
+        "tab_annealing": "Annealing",
         "tab_help": "Learning Help",
         "input_tab_hint": (
             "This tab shows what is currently fed into the network. For digits you see the 8x8 "
@@ -355,6 +490,19 @@ GUI_TEXTS = {
             "The plots show both the training history and the current state of the selected sample. "
             "Training changes weights, not the displayed sample choice."
         ),
+        "plot_info_hint": (
+            "Each plot has its own short explanation so you can directly interpret axes, colors, "
+            "and values."
+        ),
+        "plot_overview_info_button": "Plot Overview",
+        "loss_plot_info_button": "Loss",
+        "accuracy_plot_info_button": "Accuracy",
+        "probability_plot_info_button": "Probabilities",
+        "sample_activation_plot_info_button": "Sample Activations",
+        "annealing_tab_hint": (
+            "This tab shows the simulated-annealing search process: current state, candidate, "
+            "best state, temperature, and the optimization history."
+        ),
         "stepper_tab_hint": (
             "This tab breaks the current forward and backward pass for exactly the visible sample "
             "into individual learning steps."
@@ -370,7 +518,10 @@ GUI_TEXTS = {
             "The same neuron inspection as on the right side of the network view, but with more "
             "space for reading and scrolling."
         ),
-        "guide_link_text": "The detailed guide explains the structure, workflow, and the main concepts of the program from start to finish.",
+        "guide_link_text": (
+            "The detailed guide explains Demo Mode, Playground Mode, simulated annealing, "
+            "common workflows, and the main concepts of the program."
+        ),
         "target_auto_label": "(true target)",
         "target_none_label": "(no target)",
         "max_layers_title": "Maximum number of layers reached",
@@ -379,12 +530,14 @@ GUI_TEXTS = {
         "min_layers_message": "The learning model requires at least one hidden layer.",
         "load_error_title": "Could not load experiment",
         "train_error_title": "Training failed",
+        "annealing_error_title": "Simulated annealing failed",
         "guide_intro_title": "Guide",
     },
 }
 
 INFO_TEXTS = {
     "de": {
+        "app_mode": "Der Arbeitsmodus trennt zwei Ziele: Demo Mode zum Verstehen und Beobachten, Playground Mode zum Erkunden eines echten Optimierungsverfahrens mit Simulated Annealing.",
         "mode": "Der Modus steuert, wie viel Komplexitaet sichtbar ist. Einsteiger konzentriert sich auf die wichtigsten Schritte, Experte zeigt tiefe Eingriffe und Vergleichswerkzeuge.",
         "language": "Hier schaltest du die komplette GUI zwischen Deutsch und Englisch um. Die Ansichten, Hinweise, Hilfe-Texte und Dialoge werden dabei gemeinsam aktualisiert.",
         "workflow": "Der Lernfluss zeigt die empfohlene Reihenfolge fuer eine Sitzung. Ueber die Anleitung bekommst du eine einfache Gesamterklaerung des Programms von Anfang bis Ende.",
@@ -408,8 +561,83 @@ INFO_TEXTS = {
         "weight_scale": "Die Weight-Scale bestimmt die Groessenordnung der zufaelligen Startgewichte.",
         "seed": "Der Seed sorgt fuer reproduzierbare Initialisierung und reproduzierbare Datensplits.",
         "status": "Der Live-Status fasst Datensatz, aktuelle Vorhersage, Trainingsergebnisse und Baseline-Hinweise kompakt zusammen.",
+        "objective": "Die Zielmetrik bestimmt, ob ein Layout als gut oder schlecht gilt. validation_loss soll minimiert werden, validation_accuracy soll maximiert werden und wird intern in einen minimierbaren Score umgerechnet.",
+        "candidate_epochs": "So viele Epochen wird jeder SA-Kandidat trainiert, bevor er bewertet wird. Mehr Epochen geben eine fairere, aber langsamere Bewertung.",
+        "shuffle": "Wenn aktiv, werden die Trainingsdaten pro Kandidat vor dem Mini-Batch-Training gemischt. Mit gleichem Seed bleibt das Verhalten trotzdem reproduzierbar.",
+        "playground_neighborhood": "Diese Schalter bestimmen, welche Arten von Nachbarn das Annealing ueberhaupt vorschlagen darf.",
+        "start_temperature": "Die Starttemperatur legt fest, wie leicht anfangs auch schlechtere Kandidaten akzeptiert werden.",
+        "cooling_schedule": "Die Abkuehlung bestimmt, wie schnell die Temperatur sinkt. Geometrisch ist meist der robusteste Start, linear ist leicht zu verstehen, logarithmisch kuehlt besonders langsam.",
+        "cooling_parameter": "Dieser Parameter steuert die Staerke der Abkuehlung. Seine genaue Bedeutung haengt von der gewaehlten Cooling-Strategie ab.",
+        "iterations_per_temperature": "So viele SA-Schritte werden mit derselben Temperatur ausgefuehrt, bevor die naechste Abkuehlstufe beginnt.",
+        "max_steps": "Hartes Limit fuer die gesamte Anzahl an SA-Schritten.",
+        "min_temperature": "Wenn die Temperatur darunter faellt, endet die Suche.",
+        "annealing_run_control": "Mit diesen Buttons kannst du die Suche initialisieren, schrittweise beobachten oder komplett laufen lassen.",
+        "annealing_status": "Der Annealing-Status fasst aktuellen Zustand, besten Zustand, Temperatur, Akzeptanzrate und Cache-Status zusammen.",
+        "network_visualization": (
+            "Die Netzwerk-Visualisierung zeigt genau ein aktuell analysiertes Sample. "
+            "Links stehen die sichtbaren Eingaben, in der Mitte die Hidden-Neuronen und rechts "
+            "die Output-Neuronen. Die Farben der Hidden-Neuronen stehen fuer deren "
+            "Aktivierungsfunktion. Graue Linien sind nur die Grundstruktur aller Verbindungen. "
+            "Sobald ein Hidden-Neuron angeklickt wird, werden seine wichtigsten Verbindungen "
+            "hervorgehoben: blau bedeutet positiver Einfluss, rot negativer Einfluss. "
+            "Je dicker die Linie, desto staerker ist dieser Einfluss. Bei Verbindungen vom Input "
+            "zum ersten Hidden-Layer bezieht sich die Staerke auf den aktuellen Beitrag dieses "
+            "Samples, spaeter im Netz meist auf die Staerke des Gewichts. Am Output markiert der "
+            "gruene Rand die Prediction, orange Text das echte Ziel und blaugruener Text das "
+            "aktuelle Analyse-Ziel."
+        ),
+        "activation_curve": (
+            "Die Kurve unten rechts gehoert immer zum aktuell angeklickten Hidden-Neuron. "
+            "Auf der x-Achse liegt z, also die gewichtete Summe plus Bias. Auf der y-Achse liegt "
+            "a, also die Ausgabe nach der Aktivierungsfunktion. Die farbige Kurve ist die "
+            "vollstaendige Aktivierungsfunktion wie ReLU, tanh, sigmoid oder leaky_relu. "
+            "Die gestrichelte senkrechte Linie markiert den aktuellen z-Wert dieses Neurons fuer "
+            "das ausgewaehlte Sample. Der Punkt zeigt die konkrete Ausgabe a an dieser Stelle. "
+            "So sieht man direkt, ob das Neuron gerade in einem linearen, toten oder saettigenden "
+            "Bereich arbeitet."
+        ),
+        "plot_overview": (
+            "Der Plot-Tab verbindet zwei Sichtweisen: oben die Trainingsgeschichte ueber viele "
+            "Epochen und unten den aktuellen Zustand des gerade analysierten Samples. "
+            "Links oben geht es um Loss, rechts oben um Accuracy. Links unten stehen die "
+            "Klassenwahrscheinlichkeiten fuer genau dieses Sample, rechts unten die Aktivierungen "
+            "aller Hidden-Neuronen fuer dasselbe Sample. So kann man Training und Einzelbeispiel "
+            "gemeinsam lesen."
+        ),
+        "loss_plot": (
+            "Der Loss-Plot zeigt, wie gross der Fehler des Modells waehrend des Trainings ist. "
+            "Die x-Achse zeigt die Epoche, die y-Achse den mittleren Loss. Kleinere Werte sind "
+            "besser. Train und Val sollten idealerweise beide sinken. Wenn Train stark sinkt, "
+            "Val aber stehen bleibt oder steigt, spricht das fuer Overfitting. Wichtig: Loss ist "
+            "kein Prozentwert. Er misst, wie schlecht die aktuellen Wahrscheinlichkeiten zum Ziel "
+            "passen."
+        ),
+        "accuracy_plot": (
+            "Der Accuracy-Plot zeigt den Anteil korrekt klassifizierter Beispiele. Die x-Achse "
+            "zeigt die Epoche, die y-Achse einen Wert zwischen 0 und 1. Ein Wert von 0.80 "
+            "bedeutet 80 Prozent korrekte Vorhersagen. Hoeher ist besser. Wenn Train-Accuracy "
+            "stark ueber der Val-Accuracy liegt, lernt das Modell die Trainingsdaten besser als "
+            "neue Beispiele."
+        ),
+        "class_probabilities": (
+            "Dieser Plot zeigt fuer das aktuell sichtbare Sample die Wahrscheinlichkeiten aller "
+            "Output-Klassen. Alle Balken zusammen ergeben 1. Der hoechste Balken entspricht der "
+            "Prediction. Je hoeher ein Balken, desto staerker bevorzugt das Modell diese Klasse. "
+            "Falls ein Analyse-Ziel gesetzt ist, wird dessen Balken markiert, auch wenn er nicht "
+            "der groesste ist. So sieht man direkt, wie stark das Modell das gewaehlte Ziel "
+            "unterstuetzt oder ablehnt."
+        ),
+        "sample_activations": (
+            "Hier sieht man fuer das aktuelle Sample die Ausgaben aller Hidden-Neuronen. Auf der "
+            "x-Achse stehen Layer und Neuron, auf der y-Achse die Aktivierung a. Die Farben "
+            "entsprechen den verwendeten Aktivierungsfunktionen. Werte nahe 0 bedeuten oft wenig "
+            "Einfluss fuer dieses Sample. Bei ReLU sind viele Nullen typisch fuer inaktive "
+            "Neuronen. Bei tanh oder sigmoid zeigen sehr hohe oder sehr niedrige Werte oft, dass "
+            "ein Neuron in einem gesaettigten Bereich arbeitet."
+        ),
     },
     "en": {
+        "app_mode": "The workspace mode separates two goals: Demo Mode for understanding and observing, Playground Mode for exploring a real optimization procedure with simulated annealing.",
         "mode": "The mode controls how much complexity is visible. Beginner focuses on the essential steps, while Expert exposes deeper interventions and comparison tools.",
         "language": "Switch the complete GUI between German and English here. Views, hints, help texts, and dialogs are updated together.",
         "workflow": "The learning flow shows the recommended order for using the tool. The guide opens a simple explanation of the whole program from start to finish.",
@@ -433,6 +661,76 @@ INFO_TEXTS = {
         "weight_scale": "Weight scale defines the magnitude of the random initial weights.",
         "seed": "The seed makes initialization and data splits reproducible.",
         "status": "The live status summarizes dataset information, current prediction, training results, and baseline notes.",
+        "objective": "The objective defines whether a layout is considered good or bad. validation_loss is minimized, while validation_accuracy is internally converted into a minimizable score.",
+        "candidate_epochs": "This is how many epochs each SA candidate is trained before it is scored. More epochs make the score fairer but slower to compute.",
+        "shuffle": "When enabled, training data is shuffled for each candidate before mini-batch training. With the same seed the behavior remains reproducible.",
+        "playground_neighborhood": "These toggles decide which kinds of neighbors annealing is allowed to propose at all.",
+        "start_temperature": "The start temperature determines how easily worse candidates can still be accepted at the beginning.",
+        "cooling_schedule": "The cooling schedule determines how quickly the temperature drops. Geometric cooling is usually the most robust start, linear cooling is easy to understand, and logarithmic cooling decreases especially slowly.",
+        "cooling_parameter": "This parameter controls how strong the cooling is. Its exact meaning depends on the selected cooling strategy.",
+        "iterations_per_temperature": "This many SA steps are executed at the same temperature before moving to the next cooling level.",
+        "max_steps": "Hard limit for the total number of SA steps.",
+        "min_temperature": "The search stops once the temperature falls below this threshold.",
+        "annealing_run_control": "These buttons let you initialize the search, observe it step by step, or run it to completion.",
+        "annealing_status": "The annealing status summarizes the current state, best state, temperature, acceptance rate, and cache usage.",
+        "network_visualization": (
+            "The network view always shows one currently analyzed sample. Inputs are on the left, "
+            "hidden neurons in the middle, and output neurons on the right. Hidden neuron colors "
+            "represent their activation functions. Gray lines are only the base structure of all "
+            "connections. Once you click a hidden neuron, its most important connections are "
+            "highlighted: blue means positive influence, red means negative influence. Thicker "
+            "lines indicate stronger influence. For input-to-first-hidden connections, this "
+            "strength refers to the current sample contribution. Deeper in the network it usually "
+            "reflects the weight magnitude. At the output, the green outline marks the prediction, "
+            "orange text marks the true target, and teal text marks the current analysis target."
+        ),
+        "activation_curve": (
+            "The curve at the bottom right always belongs to the currently selected hidden neuron. "
+            "The x-axis shows z, the weighted sum plus bias. The y-axis shows a, the output after "
+            "applying the activation function. The colored curve is the full activation function "
+            "such as ReLU, tanh, sigmoid, or leaky_relu. The dashed vertical line marks the "
+            "current z-value of this neuron for the selected sample. The point marks the concrete "
+            "output a at that location. This lets you immediately see whether the neuron is in a "
+            "linear, dead, or saturated regime."
+        ),
+        "plot_overview": (
+            "The plot tab combines two viewpoints: the training history across many epochs on the "
+            "top row and the current state of the selected sample on the bottom row. The top left "
+            "shows loss, the top right shows accuracy. The bottom left shows class probabilities "
+            "for the current sample, and the bottom right shows hidden neuron activations for that "
+            "same sample. This makes it possible to read training dynamics and single-sample "
+            "behavior together."
+        ),
+        "loss_plot": (
+            "The loss plot shows how large the model error is during training. The x-axis shows "
+            "the epoch, the y-axis shows the average loss. Lower values are better. Ideally both "
+            "training and validation loss go down. If training loss drops strongly while validation "
+            "loss stops improving or rises, that points to overfitting. Important: loss is not a "
+            "percentage. It measures how poorly the current predicted probabilities match the "
+            "target labels."
+        ),
+        "accuracy_plot": (
+            "The accuracy plot shows the fraction of correctly classified examples. The x-axis "
+            "shows the epoch, the y-axis a value between 0 and 1. A value of 0.80 means 80 "
+            "percent correct predictions. Higher is better. If training accuracy becomes much "
+            "higher than validation accuracy, the model fits the training data better than new "
+            "unseen examples."
+        ),
+        "class_probabilities": (
+            "This plot shows the output probabilities of all classes for the currently visible "
+            "sample. All bars together sum to 1. The highest bar is the prediction. The higher a "
+            "bar is, the more strongly the model prefers that class. If an analysis target is set, "
+            "its bar is highlighted even when it is not the largest. This lets you directly see "
+            "how strongly the model supports or rejects the chosen target."
+        ),
+        "sample_activations": (
+            "This plot shows the outputs of all hidden neurons for the current sample. The x-axis "
+            "lists layer and neuron, the y-axis shows the activation value a. Colors correspond to "
+            "the activation functions in use. Values near 0 often indicate little influence for "
+            "this sample. For ReLU, many zeros are typical for inactive neurons. For tanh or "
+            "sigmoid, very high or very low values often indicate that a neuron is operating in a "
+            "saturated region."
+        ),
     },
 }
 
@@ -486,6 +784,7 @@ class GuiExperimentConfig:
 
     benchmark: str
     hidden_sizes: tuple[int, ...]
+    app_mode: str = DEFAULT_GUI_APP_MODE
     layout_spec: str = DEFAULT_LAYOUT
     epochs: int = DEFAULT_EPOCHS
     learning_rate: float = DEFAULT_LEARNING_RATE
@@ -554,11 +853,15 @@ class PlaygroundGUI:
         self.controls_canvas: tk.Canvas | None = None
         self.controls_inner: ttk.Frame | None = None
         self.controls_window_id: int | None = None
+        self.main_paned_window: ttk.Panedwindow | None = None
+        self.controls_container: ttk.Frame | None = None
         self.canvas_frame: ttk.LabelFrame | None = None
         self.live_detail_frame: ttk.Frame | None = None
         self._network_draw_width = 0
         self._network_draw_height = 0
 
+        self.app_mode_var = tk.StringVar(value=config.app_mode)
+        self.app_mode_display_var = tk.StringVar(value="")
         self.mode_var = tk.StringVar(value=config.mode)
         self.mode_display_var = tk.StringVar(value="")
         self.language_var = tk.StringVar(value=config.language)
@@ -592,8 +895,33 @@ class PlaygroundGUI:
         self.network_summary_var = tk.StringVar(value="")
         self.compare_summary_var = tk.StringVar(value="")
         self.layer_summary_var = tk.StringVar(value="")
+        self.playground_summary_var = tk.StringVar(value="")
+        self.playground_decision_var = tk.StringVar(value="")
 
         self.test_input_vars = [tk.DoubleVar(value=0.0) for _ in range(3)]
+        self.objective_var = tk.StringVar(value=DEFAULT_ANNEALING_OBJECTIVE)
+        self.candidate_epochs_var = tk.IntVar(value=DEFAULT_ANNEALING_CANDIDATE_EPOCHS)
+        self.playground_shuffle_var = tk.BooleanVar(value=True)
+        self.start_temperature_var = tk.StringVar(value=str(DEFAULT_ANNEALING_START_TEMPERATURE))
+        self.cooling_schedule_var = tk.StringVar(value=DEFAULT_ANNEALING_COOLING_SCHEDULE)
+        self.cooling_parameter_var = tk.StringVar(value=str(DEFAULT_ANNEALING_COOLING_PARAMETER))
+        self.iterations_per_temperature_var = tk.IntVar(value=DEFAULT_ANNEALING_ITERATIONS_PER_TEMPERATURE)
+        self.max_steps_var = tk.IntVar(value=DEFAULT_ANNEALING_MAX_STEPS)
+        self.min_temperature_var = tk.StringVar(value=str(DEFAULT_ANNEALING_MIN_TEMPERATURE))
+        self.playground_neighbor_vars = {
+            operation: tk.BooleanVar(value=operation in DEFAULT_ANNEALING_NEIGHBORHOODS)
+            for operation in ("set_neuron", "fill_layer", "swap_neurons")
+        }
+
+        self.annealing_runner: AnnealingRunner | None = None
+        self.annealing_state: AnnealingState | None = None
+        self.annealing_last_step: AnnealingStep | None = None
+        self.annealing_last_candidate: ObjectiveEvaluation | None = None
+        self.annealing_text: ScrolledText | None = None
+        self.annealing_status_label: ttk.Label | None = None
+        self.annealing_figure: Figure | None = None
+        self.annealing_axes: list[Any] = []
+        self.annealing_canvas_widget: FigureCanvasTkAgg | None = None
 
         self._configure_styles()
         self._build_layout()
@@ -632,6 +960,33 @@ class PlaygroundGUI:
 
         language = self._language()
         return INFO_TEXTS.get(language, INFO_TEXTS["de"]).get(key, INFO_TEXTS["de"].get(key, key))
+
+    def _app_mode(self) -> str:
+        """Liefert den aktuellen Arbeitsmodus."""
+
+        current_mode = self.app_mode_var.get()
+        return current_mode if current_mode in SUPPORTED_GUI_APP_MODES else DEFAULT_GUI_APP_MODE
+
+    def _app_mode_label(self, app_mode_value: str) -> str:
+        """Uebersetzt interne App-Modi in sichtbare GUI-Labels."""
+
+        return APP_MODE_LABELS.get(self._language(), APP_MODE_LABELS["de"]).get(
+            app_mode_value,
+            app_mode_value,
+        )
+
+    def _app_mode_from_label(self, app_mode_label: str) -> str:
+        """Wandelt ein sichtbares App-Mode-Label zurueck in den internen Wert."""
+
+        for app_mode_value in SUPPORTED_GUI_APP_MODES:
+            if self._app_mode_label(app_mode_value) == app_mode_label:
+                return app_mode_value
+        return DEFAULT_GUI_APP_MODE
+
+    def _sync_app_mode_display_var(self) -> None:
+        """Synchronisiert das sichtbare App-Mode-Label mit dem internen Wert."""
+
+        self.app_mode_display_var.set(self._app_mode_label(self._app_mode()))
 
     def _mode_label(self, mode_value: str) -> str:
         """Uebersetzt interne Moduswerte in sichtbare GUI-Labels."""
@@ -680,15 +1035,17 @@ class PlaygroundGUI:
 
         outer = ttk.Frame(self.root, padding=12)
         outer.pack(fill=tk.BOTH, expand=True)
-        outer.columnconfigure(0, weight=0)
-        outer.columnconfigure(1, weight=1)
+        outer.columnconfigure(0, weight=1)
         outer.rowconfigure(0, weight=1)
 
-        controls_container = ttk.Frame(outer, style="White.TFrame")
-        controls_container.grid(row=0, column=0, sticky="ns", padx=(0, 12))
+        self.main_paned_window = ttk.Panedwindow(outer, orient=tk.HORIZONTAL)
+        self.main_paned_window.grid(row=0, column=0, sticky="nsew")
+
+        controls_container = ttk.Frame(self.main_paned_window, style="White.TFrame", padding=(0, 0, 8, 0))
         controls_container.rowconfigure(0, weight=1)
         controls_container.columnconfigure(0, weight=1)
         controls_container.columnconfigure(1, weight=0)
+        self.controls_container = controls_container
 
         self.controls_canvas = tk.Canvas(
             controls_container,
@@ -696,7 +1053,7 @@ class PlaygroundGUI:
             highlightthickness=0,
             width=430,
         )
-        self.controls_canvas.grid(row=0, column=0, sticky="ns")
+        self.controls_canvas.grid(row=0, column=0, sticky="nsew")
         controls_scrollbar = ttk.Scrollbar(
             controls_container,
             orient=tk.VERTICAL,
@@ -718,16 +1075,33 @@ class PlaygroundGUI:
         self.controls_inner.bind("<Enter>", self._bind_controls_mousewheel)
         self.controls_inner.bind("<Leave>", self._unbind_controls_mousewheel)
 
-        content = ttk.Frame(outer, style="White.TFrame")
-        content.grid(row=0, column=1, sticky="nsew")
+        content = ttk.Frame(self.main_paned_window, style="White.TFrame")
         content.columnconfigure(0, weight=1)
         content.rowconfigure(0, weight=0)
         content.rowconfigure(1, weight=3)
         content.rowconfigure(2, weight=2)
 
+        self.main_paned_window.add(controls_container, weight=0)
+        self.main_paned_window.add(content, weight=1)
+
         self._build_controls(self.controls_inner)
         self._build_content(content)
         self._apply_mode_visibility()
+        self.root.after(0, self._set_initial_pane_geometry)
+
+    def _set_initial_pane_geometry(self) -> None:
+        """Setzt eine sinnvolle Startbreite fuer die linke, ziehbare Seitenleiste."""
+
+        if self.main_paned_window is None or self.controls_container is None:
+            return
+        try:
+            total_width = max(self.main_paned_window.winfo_width(), 1)
+            if total_width <= 1:
+                return
+            desired_width = min(max(int(total_width * 0.28), 360), 520)
+            self.main_paned_window.sashpos(0, desired_width)
+        except tk.TclError:
+            return
 
     def _on_controls_inner_configure(self, _event: tk.Event) -> None:
         """Aktualisiert den Scrollbereich der linken Seitenleiste."""
@@ -761,11 +1135,12 @@ class PlaygroundGUI:
         if use_stacked_layout:
             self.canvas_frame.columnconfigure(0, weight=1)
             self.canvas_frame.columnconfigure(1, weight=0)
-            self.canvas_frame.rowconfigure(0, weight=4)
-            self.canvas_frame.rowconfigure(1, weight=3)
-            self.canvas.grid_configure(row=0, column=0, sticky="nsew")
+            self.canvas_frame.rowconfigure(0, weight=0)
+            self.canvas_frame.rowconfigure(1, weight=4)
+            self.canvas_frame.rowconfigure(2, weight=3)
+            self.canvas.grid_configure(row=1, column=0, sticky="nsew")
             self.live_detail_frame.grid_configure(
-                row=1,
+                row=2,
                 column=0,
                 sticky="nsew",
                 padx=(0, 0),
@@ -775,11 +1150,12 @@ class PlaygroundGUI:
         else:
             self.canvas_frame.columnconfigure(0, weight=5)
             self.canvas_frame.columnconfigure(1, weight=3)
-            self.canvas_frame.rowconfigure(0, weight=1)
-            self.canvas_frame.rowconfigure(1, weight=0)
-            self.canvas.grid_configure(row=0, column=0, sticky="nsew")
+            self.canvas_frame.rowconfigure(0, weight=0)
+            self.canvas_frame.rowconfigure(1, weight=1)
+            self.canvas_frame.rowconfigure(2, weight=0)
+            self.canvas.grid_configure(row=1, column=0, sticky="nsew")
             self.live_detail_frame.grid_configure(
-                row=0,
+                row=1,
                 column=1,
                 sticky="nsew",
                 padx=(8, 0),
@@ -832,6 +1208,20 @@ class PlaygroundGUI:
             command=lambda key=info_key: self._show_info(key),
         )
 
+    def _create_info_action_button(
+        self,
+        parent: tk.Widget,
+        label_text: str,
+        info_key: str,
+    ) -> ttk.Button:
+        """Erzeugt einen beschrifteten Button, der eine laengere Info oeffnet."""
+
+        return ttk.Button(
+            parent,
+            text=f"{label_text}  i",
+            command=lambda key=info_key: self._show_info(key),
+        )
+
     def _grid_label_with_info(
         self,
         parent: ttk.Frame,
@@ -874,6 +1264,23 @@ class PlaygroundGUI:
         self.mode_var.set(self._mode_from_label(self.mode_display_var.get()))
         self._on_mode_changed()
 
+    def _on_app_mode_selected(self, _event=None) -> None:
+        """Schaltet zwischen Demo Mode und Playground Mode um."""
+
+        selected_app_mode = self._app_mode_from_label(self.app_mode_display_var.get())
+        if selected_app_mode == self._app_mode():
+            return
+        analysis_target_token = self._analysis_target_token()
+        selected_tab_index = 0
+        if hasattr(self, "notebook"):
+            try:
+                selected_tab_index = int(self.notebook.index(self.notebook.select()))
+            except tk.TclError:
+                selected_tab_index = 0
+        self.app_mode_var.set(selected_app_mode)
+        self._set_analysis_target_from_token(analysis_target_token)
+        self._rebuild_interface(selected_tab_index=selected_tab_index)
+
     def _on_language_selected(self, _event=None) -> None:
         """Schaltet die GUI-Sprache um und baut die Oberflaeche neu auf."""
 
@@ -910,12 +1317,20 @@ class PlaygroundGUI:
         self.controls_canvas = None
         self.controls_inner = None
         self.controls_window_id = None
+        self.main_paned_window = None
+        self.controls_container = None
         self.guide_window = None
+        self.annealing_text = None
+        self.annealing_status_label = None
+        self.annealing_figure = None
+        self.annealing_axes = []
+        self.annealing_canvas_widget = None
 
         for child in self.root.winfo_children():
             child.destroy()
 
         self._build_layout()
+        self._sync_app_mode_display_var()
         self._sync_mode_display_var()
         self._sync_language_display_var()
         self._update_target_options()
@@ -932,21 +1347,44 @@ class PlaygroundGUI:
 
     def _build_controls(self, parent: ttk.Frame) -> None:
         """Linke Seitenleiste mit Assistent, Layout, Training und Vergleich."""
+        self._sync_app_mode_display_var()
         self._sync_mode_display_var()
         self._sync_language_display_var()
 
         mode_frame = ttk.LabelFrame(parent, text=self.t("mode_frame_title"), padding=10)
         mode_frame.pack(fill=tk.X, pady=(0, 10))
+        mode_hint_row = ttk.Frame(mode_frame, style="White.TFrame")
+        mode_hint_row.pack(fill=tk.X)
         ttk.Label(
-            mode_frame,
+            mode_hint_row,
             text=self.t("mode_hint"),
             style="Hint.TLabel",
             justify=tk.LEFT,
-        ).pack(anchor="w")
-        mode_row = ttk.Frame(mode_frame, style="White.TFrame")
-        mode_row.pack(fill=tk.X, pady=(8, 0))
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        mode_controls = ttk.Frame(mode_frame, style="White.TFrame")
+        mode_controls.pack(fill=tk.X, pady=(10, 0))
+
+        app_mode_row = ttk.Frame(mode_controls, style="White.TFrame")
+        app_mode_row.pack(fill=tk.X)
+        app_mode_left = ttk.Frame(app_mode_row, style="White.TFrame")
+        app_mode_left.pack(fill=tk.X)
+        ttk.Label(app_mode_left, text=self.t("app_mode_label")).pack(side=tk.LEFT)
+        self._create_info_button(app_mode_left, "app_mode").pack(side=tk.LEFT, padx=(6, 0))
+        app_mode_combo = ttk.Combobox(
+            app_mode_row,
+            textvariable=self.app_mode_display_var,
+            values=[self._app_mode_label(value) for value in SUPPORTED_GUI_APP_MODES],
+            state="readonly",
+            width=24,
+        )
+        app_mode_combo.pack(fill=tk.X, pady=(4, 0))
+        app_mode_combo.bind("<<ComboboxSelected>>", self._on_app_mode_selected)
+
+        mode_row = ttk.Frame(mode_controls, style="White.TFrame")
+        mode_row.pack(fill=tk.X, pady=(10, 0))
         mode_left = ttk.Frame(mode_row, style="White.TFrame")
-        mode_left.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        mode_left.pack(fill=tk.X)
         ttk.Label(mode_left, text=self.t("mode_label")).pack(side=tk.LEFT)
         self._create_info_button(mode_left, "mode").pack(side=tk.LEFT, padx=(6, 0))
         mode_combo = ttk.Combobox(
@@ -954,23 +1392,25 @@ class PlaygroundGUI:
             textvariable=self.mode_display_var,
             values=[self._mode_label(value) for value in SUPPORTED_GUI_MODES],
             state="readonly",
-            width=14,
+            width=24,
         )
-        mode_combo.pack(side=tk.LEFT, padx=(8, 12))
+        mode_combo.pack(fill=tk.X, pady=(4, 0))
         mode_combo.bind("<<ComboboxSelected>>", self._on_mode_selected)
 
-        language_left = ttk.Frame(mode_row, style="White.TFrame")
-        language_left.pack(side=tk.LEFT)
+        language_row = ttk.Frame(mode_controls, style="White.TFrame")
+        language_row.pack(fill=tk.X, pady=(10, 0))
+        language_left = ttk.Frame(language_row, style="White.TFrame")
+        language_left.pack(fill=tk.X)
         ttk.Label(language_left, text=self.t("language_label")).pack(side=tk.LEFT)
         self._create_info_button(language_left, "language").pack(side=tk.LEFT, padx=(6, 0))
         language_combo = ttk.Combobox(
-            mode_row,
+            language_row,
             textvariable=self.language_display_var,
             values=[LANGUAGE_LABELS[code] for code in SUPPORTED_GUI_LANGUAGES],
             state="readonly",
-            width=10,
+            width=24,
         )
-        language_combo.pack(side=tk.LEFT, padx=(8, 0))
+        language_combo.pack(fill=tk.X, pady=(4, 0))
         language_combo.bind("<<ComboboxSelected>>", self._on_language_selected)
 
         workflow_frame = ttk.LabelFrame(parent, text=self.t("workflow_frame_title"), padding=10)
@@ -1213,6 +1653,38 @@ class PlaygroundGUI:
         ttk.Button(self.neuron_button_row, text=self.t("set_neuron_button"), command=self._apply_neuron_setting).pack(side=tk.LEFT)
         ttk.Button(self.neuron_button_row, text=self.t("cycle_button"), command=self._cycle_selected_neuron).pack(side=tk.LEFT, padx=(8, 0))
 
+        if self._app_mode() == "playground":
+            self._build_playground_controls(parent)
+        else:
+            self._build_demo_training_controls(parent)
+
+        self._build_status_frame(parent)
+
+        self.expert_only_widgets.extend(
+            [
+                self.hidden_layers_label,
+                self.layer_size_controls_frame,
+                self.hidden_layer_buttons,
+                self.analysis_target_label,
+                self.analysis_target_combo,
+                self.layer_fill_controls_frame,
+                self.neuron_layer_label,
+                self.neuron_layer_combo,
+                self.neuron_index_label,
+                self.neuron_index_combo,
+                self.neuron_activation_label,
+                self.neuron_activation_combo,
+                self.neuron_button_row,
+            ]
+        )
+
+        self._rebuild_hidden_size_controls()
+        self._rebuild_layer_fill_controls()
+        self._apply_mode_visibility()
+
+    def _build_demo_training_controls(self, parent: ttk.Frame) -> None:
+        """Baut den bisherigen Trainingsblock fuer den Demo Mode."""
+
         training_frame = ttk.LabelFrame(parent, text=self.t("training_frame_title"), padding=10)
         training_frame.pack(fill=tk.X, pady=(0, 10))
         training_frame.columnconfigure(1, weight=1)
@@ -1258,11 +1730,253 @@ class PlaygroundGUI:
         ttk.Button(self.training_button_row_2, text=self.t("save_baseline_button"), command=self._store_baseline).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(self.training_button_row_2, text=self.t("refresh_view_button"), command=self._refresh_views).pack(side=tk.LEFT, padx=(8, 0))
 
-        status_frame = ttk.LabelFrame(parent, text=self.t("status_frame_title"), padding=10)
+        self.expert_only_widgets.extend(
+            [
+                self.epochs_label,
+                self.epochs_spinbox,
+                self.lr_label,
+                self.lr_entry,
+                self.batch_label,
+                self.batch_spinbox,
+                self.weight_scale_label,
+                self.weight_scale_entry,
+                self.seed_label,
+                self.seed_spinbox,
+                self.training_button_row_2,
+            ]
+        )
+
+    def _build_playground_controls(self, parent: ttk.Frame) -> None:
+        """Baut die SA-spezifischen Steuerungen fuer den Playground Mode."""
+
+        objective_frame = ttk.LabelFrame(parent, text=self.t("objective_frame_title"), padding=10)
+        objective_frame.pack(fill=tk.X, pady=(0, 10))
+        objective_frame.columnconfigure(1, weight=1)
+        objective_hint_row = ttk.Frame(objective_frame, style="White.TFrame")
+        objective_hint_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(
+            objective_hint_row,
+            text=self.t("objective_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(objective_hint_row, "objective").pack(side=tk.RIGHT)
+
+        self.objective_label = self._grid_label_with_info(
+            objective_frame,
+            1,
+            self.t("objective_label"),
+            "objective",
+            pady=(10, 0),
+        )
+        self.objective_combo = ttk.Combobox(
+            objective_frame,
+            textvariable=self.objective_var,
+            values=SUPPORTED_OBJECTIVES,
+            state="readonly",
+            width=20,
+        )
+        self.objective_combo.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.objective_combo.bind("<<ComboboxSelected>>", lambda _event: self._initialize_playground_state())
+
+        self.candidate_epochs_label = self._grid_label_with_info(
+            objective_frame,
+            2,
+            self.t("candidate_epochs_label"),
+            "candidate_epochs",
+        )
+        self.candidate_epochs_spinbox = ttk.Spinbox(
+            objective_frame,
+            from_=1,
+            to=5000,
+            textvariable=self.candidate_epochs_var,
+            width=8,
+        )
+        self.candidate_epochs_spinbox.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.lr_label = self._grid_label_with_info(objective_frame, 3, self.t("learning_rate_label"), "learning_rate")
+        self.lr_entry = ttk.Entry(objective_frame, textvariable=self.lr_var, width=10)
+        self.lr_entry.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.batch_label = self._grid_label_with_info(objective_frame, 4, self.t("batch_size_label"), "batch_size")
+        self.batch_spinbox = ttk.Spinbox(objective_frame, from_=1, to=4096, textvariable=self.batch_size_var, width=8)
+        self.batch_spinbox.grid(row=4, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.weight_scale_label = self._grid_label_with_info(objective_frame, 5, self.t("weight_scale_label"), "weight_scale")
+        self.weight_scale_entry = ttk.Entry(objective_frame, textvariable=self.weight_scale_var, width=10)
+        self.weight_scale_entry.grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.seed_label = self._grid_label_with_info(objective_frame, 6, self.t("seed_label"), "seed")
+        self.seed_spinbox = ttk.Spinbox(objective_frame, from_=0, to=999999, textvariable=self.seed_var, width=8)
+        self.seed_spinbox.grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        shuffle_row = ttk.Frame(objective_frame, style="White.TFrame")
+        shuffle_row.grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.playground_shuffle_checkbutton = ttk.Checkbutton(
+            shuffle_row,
+            text=self.t("shuffle_label"),
+            variable=self.playground_shuffle_var,
+        )
+        self.playground_shuffle_checkbutton.pack(side=tk.LEFT)
+        self._create_info_button(shuffle_row, "shuffle").pack(side=tk.LEFT, padx=(8, 0))
+
+        neighborhood_frame = ttk.LabelFrame(parent, text=self.t("neighborhood_frame_title"), padding=10)
+        neighborhood_frame.pack(fill=tk.X, pady=(0, 10))
+        neighborhood_hint_row = ttk.Frame(neighborhood_frame, style="White.TFrame")
+        neighborhood_hint_row.pack(fill=tk.X)
+        ttk.Label(
+            neighborhood_hint_row,
+            text=self.t("neighborhood_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(neighborhood_hint_row, "playground_neighborhood").pack(side=tk.RIGHT)
+
+        self.neighbor_set_checkbutton = ttk.Checkbutton(
+            neighborhood_frame,
+            text=self.t("neighbor_set_label"),
+            variable=self.playground_neighbor_vars["set_neuron"],
+        )
+        self.neighbor_set_checkbutton.pack(anchor="w", pady=(8, 0))
+        self.neighbor_fill_checkbutton = ttk.Checkbutton(
+            neighborhood_frame,
+            text=self.t("neighbor_fill_label"),
+            variable=self.playground_neighbor_vars["fill_layer"],
+        )
+        self.neighbor_fill_checkbutton.pack(anchor="w", pady=(6, 0))
+        self.neighbor_swap_checkbutton = ttk.Checkbutton(
+            neighborhood_frame,
+            text=self.t("neighbor_swap_label"),
+            variable=self.playground_neighbor_vars["swap_neurons"],
+        )
+        self.neighbor_swap_checkbutton.pack(anchor="w", pady=(6, 0))
+
+        annealing_frame = ttk.LabelFrame(parent, text=self.t("annealing_frame_title"), padding=10)
+        annealing_frame.pack(fill=tk.X, pady=(0, 10))
+        annealing_frame.columnconfigure(1, weight=1)
+        annealing_hint_row = ttk.Frame(annealing_frame, style="White.TFrame")
+        annealing_hint_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(
+            annealing_hint_row,
+            text=self.t("annealing_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(annealing_hint_row, "annealing_run_control").pack(side=tk.RIGHT)
+
+        self.start_temperature_label = self._grid_label_with_info(
+            annealing_frame,
+            1,
+            self.t("start_temperature_label"),
+            "start_temperature",
+            pady=(10, 0),
+        )
+        self.start_temperature_entry = ttk.Entry(annealing_frame, textvariable=self.start_temperature_var, width=10)
+        self.start_temperature_entry.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+
+        self.cooling_schedule_label = self._grid_label_with_info(
+            annealing_frame,
+            2,
+            self.t("cooling_schedule_label"),
+            "cooling_schedule",
+        )
+        self.cooling_schedule_combo = ttk.Combobox(
+            annealing_frame,
+            textvariable=self.cooling_schedule_var,
+            values=SUPPORTED_COOLING_SCHEDULES,
+            state="readonly",
+            width=16,
+        )
+        self.cooling_schedule_combo.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.cooling_parameter_label = self._grid_label_with_info(
+            annealing_frame,
+            3,
+            self.t("cooling_parameter_label"),
+            "cooling_parameter",
+        )
+        self.cooling_parameter_entry = ttk.Entry(annealing_frame, textvariable=self.cooling_parameter_var, width=10)
+        self.cooling_parameter_entry.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.iterations_per_temperature_label = self._grid_label_with_info(
+            annealing_frame,
+            4,
+            self.t("iterations_per_temperature_label"),
+            "iterations_per_temperature",
+        )
+        self.iterations_per_temperature_spinbox = ttk.Spinbox(
+            annealing_frame,
+            from_=1,
+            to=500,
+            textvariable=self.iterations_per_temperature_var,
+            width=8,
+        )
+        self.iterations_per_temperature_spinbox.grid(row=4, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.max_steps_label = self._grid_label_with_info(
+            annealing_frame,
+            5,
+            self.t("max_steps_label"),
+            "max_steps",
+        )
+        self.max_steps_spinbox = ttk.Spinbox(
+            annealing_frame,
+            from_=1,
+            to=5000,
+            textvariable=self.max_steps_var,
+            width=8,
+        )
+        self.max_steps_spinbox.grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.min_temperature_label = self._grid_label_with_info(
+            annealing_frame,
+            6,
+            self.t("min_temperature_label"),
+            "min_temperature",
+        )
+        self.min_temperature_entry = ttk.Entry(annealing_frame, textvariable=self.min_temperature_var, width=10)
+        self.min_temperature_entry.grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        run_frame = ttk.LabelFrame(parent, text=self.t("run_frame_title"), padding=10)
+        run_frame.pack(fill=tk.X, pady=(0, 10))
+        run_hint_row = ttk.Frame(run_frame, style="White.TFrame")
+        run_hint_row.pack(fill=tk.X)
+        ttk.Label(
+            run_hint_row,
+            text=self.t("run_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(run_hint_row, "annealing_run_control").pack(side=tk.RIGHT)
+
+        run_button_row_1 = ttk.Frame(run_frame, style="White.TFrame")
+        run_button_row_1.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(run_button_row_1, text=self.t("evaluate_start_button"), command=self._initialize_playground_state).pack(side=tk.LEFT)
+        ttk.Button(run_button_row_1, text=self.t("anneal_step_button"), command=lambda: self._run_annealing_steps(1)).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(run_button_row_1, text=self.t("anneal_10_button"), command=lambda: self._run_annealing_steps(10)).pack(side=tk.LEFT, padx=(8, 0))
+        run_button_row_2 = ttk.Frame(run_frame, style="White.TFrame")
+        run_button_row_2.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(run_button_row_2, text=self.t("anneal_run_button"), command=self._run_annealing_to_completion).pack(side=tk.LEFT)
+        ttk.Button(run_button_row_2, text=self.t("anneal_reset_button"), command=self._initialize_playground_state).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _build_status_frame(self, parent: ttk.Frame) -> None:
+        """Baut den unteren Statusblock der linken Spalte."""
+
+        frame_title = (
+            self.t("anneal_status_frame_title")
+            if self._app_mode() == "playground"
+            else self.t("status_frame_title")
+        )
+        status_frame = ttk.LabelFrame(parent, text=frame_title, padding=10)
         status_frame.pack(fill=tk.BOTH, expand=True)
         status_top_row = ttk.Frame(status_frame, style="White.TFrame")
         status_top_row.pack(fill=tk.X)
-        self._create_info_button(status_top_row, "status").pack(side=tk.RIGHT)
+        info_key = "annealing_status" if self._app_mode() == "playground" else "status"
+        self._create_info_button(status_top_row, info_key).pack(side=tk.RIGHT)
         ttk.Label(
             status_frame,
             textvariable=self.dataset_summary_var,
@@ -1284,46 +1998,29 @@ class PlaygroundGUI:
             style="SectionValue.TLabel",
             wraplength=330,
         ).pack(anchor="w", pady=(10, 0))
-        ttk.Label(
-            status_frame,
-            textvariable=self.compare_summary_var,
-            justify=tk.LEFT,
-            style="Hint.TLabel",
-            wraplength=330,
-        ).pack(anchor="w", pady=(10, 0))
-
-        self.expert_only_widgets.extend(
-            [
-                self.hidden_layers_label,
-                self.layer_size_controls_frame,
-                self.hidden_layer_buttons,
-                self.analysis_target_label,
-                self.analysis_target_combo,
-                self.layer_fill_controls_frame,
-                self.neuron_layer_label,
-                self.neuron_layer_combo,
-                self.neuron_index_label,
-                self.neuron_index_combo,
-                self.neuron_activation_label,
-                self.neuron_activation_combo,
-                self.neuron_button_row,
-                self.epochs_label,
-                self.epochs_spinbox,
-                self.lr_label,
-                self.lr_entry,
-                self.batch_label,
-                self.batch_spinbox,
-                self.weight_scale_label,
-                self.weight_scale_entry,
-                self.seed_label,
-                self.seed_spinbox,
-                self.training_button_row_2,
-            ]
-        )
-
-        self._rebuild_hidden_size_controls()
-        self._rebuild_layer_fill_controls()
-        self._apply_mode_visibility()
+        if self._app_mode() == "playground":
+            ttk.Label(
+                status_frame,
+                textvariable=self.playground_summary_var,
+                justify=tk.LEFT,
+                style="SectionValue.TLabel",
+                wraplength=330,
+            ).pack(anchor="w", pady=(10, 0))
+            ttk.Label(
+                status_frame,
+                textvariable=self.playground_decision_var,
+                justify=tk.LEFT,
+                style="Hint.TLabel",
+                wraplength=330,
+            ).pack(anchor="w", pady=(10, 0))
+        else:
+            ttk.Label(
+                status_frame,
+                textvariable=self.compare_summary_var,
+                justify=tk.LEFT,
+                style="Hint.TLabel",
+                wraplength=330,
+            ).pack(anchor="w", pady=(10, 0))
 
     def _build_content(self, parent: ttk.Frame) -> None:
         """Rechter Bereich mit Netzwerk, Input-Ansicht, Plotting und Lernhilfe."""
@@ -1342,16 +2039,40 @@ class PlaygroundGUI:
         self.canvas_frame.grid(row=1, column=0, sticky="nsew", pady=(10, 10))
         self.canvas_frame.columnconfigure(0, weight=5)
         self.canvas_frame.columnconfigure(1, weight=3)
-        self.canvas_frame.rowconfigure(0, weight=1)
-        self.canvas_frame.rowconfigure(1, weight=0)
+        self.canvas_frame.rowconfigure(0, weight=0)
+        self.canvas_frame.rowconfigure(1, weight=1)
+        self.canvas_frame.rowconfigure(2, weight=0)
         self.canvas_frame.bind("<Configure>", self._on_canvas_frame_configure)
 
+        network_toolbar = ttk.Frame(self.canvas_frame, style="White.TFrame")
+        network_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        network_toolbar.columnconfigure(0, weight=1)
+        ttk.Label(
+            network_toolbar,
+            text=self.t("network_toolbar_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=760,
+        ).grid(row=0, column=0, sticky="w")
+        network_button_row = ttk.Frame(network_toolbar, style="White.TFrame")
+        network_button_row.grid(row=0, column=1, sticky="e", padx=(12, 0))
+        self._create_info_action_button(
+            network_button_row,
+            self.t("network_info_button"),
+            "network_visualization",
+        ).pack(side=tk.LEFT)
+        self._create_info_action_button(
+            network_button_row,
+            self.t("activation_curve_info_button"),
+            "activation_curve",
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
         self.canvas = tk.Canvas(self.canvas_frame, bg=NETWORK_BACKGROUND_COLOR, highlightthickness=0)
-        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.canvas.grid(row=1, column=0, sticky="nsew")
         self.canvas.bind("<Configure>", lambda _event: self._redraw_network())
 
         self.live_detail_frame = ttk.Frame(self.canvas_frame, style="White.TFrame", padding=(8, 0, 0, 0))
-        self.live_detail_frame.grid(row=0, column=1, sticky="nsew")
+        self.live_detail_frame.grid(row=1, column=1, sticky="nsew")
         self.live_detail_frame.columnconfigure(0, weight=1)
         self.live_detail_frame.rowconfigure(2, weight=1)
         self.live_detail_frame.rowconfigure(3, weight=0)
@@ -1391,6 +2112,7 @@ class PlaygroundGUI:
         self.stepper_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
         self.detail_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
         self.compare_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
+        self.annealing_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
         self.help_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
 
         self.notebook.add(self.input_tab, text=self.t("tab_input"))
@@ -1398,6 +2120,8 @@ class PlaygroundGUI:
         self.notebook.add(self.stepper_tab, text=self.t("tab_stepper"))
         self.notebook.add(self.detail_tab, text=self.t("tab_detail"))
         self.notebook.add(self.compare_tab, text=self.t("tab_compare"))
+        if self._app_mode() == "playground":
+            self.notebook.add(self.annealing_tab, text=self.t("tab_annealing"))
         self.notebook.add(self.help_tab, text=self.t("tab_help"))
 
         self._build_input_tab()
@@ -1405,6 +2129,8 @@ class PlaygroundGUI:
         self._build_stepper_tab()
         self._build_detail_tab()
         self._build_compare_tab()
+        if self._app_mode() == "playground":
+            self._build_annealing_tab()
         self._build_help_tab()
 
     def _build_input_tab(self) -> None:
@@ -1546,7 +2272,9 @@ class PlaygroundGUI:
         """Tab mit eingebetteten Trainingsplots."""
 
         self.plot_tab.columnconfigure(0, weight=1)
-        self.plot_tab.rowconfigure(1, weight=1)
+        self.plot_tab.rowconfigure(0, weight=0)
+        self.plot_tab.rowconfigure(1, weight=0)
+        self.plot_tab.rowconfigure(2, weight=1)
 
         ttk.Label(
             self.plot_tab,
@@ -1555,8 +2283,46 @@ class PlaygroundGUI:
             justify=tk.LEFT,
         ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
 
+        plot_info_row = ttk.Frame(self.plot_tab, style="White.TFrame")
+        plot_info_row.grid(row=1, column=0, sticky="ew", padx=10, pady=(8, 0))
+        plot_info_row.columnconfigure(0, weight=1)
+        ttk.Label(
+            plot_info_row,
+            text=self.t("plot_info_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=760,
+        ).grid(row=0, column=0, sticky="w")
+        plot_info_button_row = ttk.Frame(plot_info_row, style="White.TFrame")
+        plot_info_button_row.grid(row=0, column=1, sticky="e", padx=(12, 0))
+        self._create_info_action_button(
+            plot_info_button_row,
+            self.t("plot_overview_info_button"),
+            "plot_overview",
+        ).pack(side=tk.LEFT)
+        self._create_info_action_button(
+            plot_info_button_row,
+            self.t("loss_plot_info_button"),
+            "loss_plot",
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        self._create_info_action_button(
+            plot_info_button_row,
+            self.t("accuracy_plot_info_button"),
+            "accuracy_plot",
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        self._create_info_action_button(
+            plot_info_button_row,
+            self.t("probability_plot_info_button"),
+            "class_probabilities",
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        self._create_info_action_button(
+            plot_info_button_row,
+            self.t("sample_activation_plot_info_button"),
+            "sample_activations",
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
         figure_frame = ttk.Frame(self.plot_tab, style="White.TFrame")
-        figure_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        figure_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=10)
         figure_frame.columnconfigure(0, weight=1)
         figure_frame.rowconfigure(0, weight=1)
 
@@ -1608,6 +2374,50 @@ class PlaygroundGUI:
         self.compare_text = ScrolledText(self.compare_tab, wrap=tk.WORD)
         self.compare_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
         self.compare_text.configure(state=tk.DISABLED, font=("Menlo", 11))
+
+    def _build_annealing_tab(self) -> None:
+        """Tab fuer Live-Ansicht und Verlauf von Simulated Annealing."""
+
+        self.annealing_tab.columnconfigure(0, weight=1)
+        self.annealing_tab.rowconfigure(2, weight=1)
+        self.annealing_tab.rowconfigure(3, weight=1)
+        ttk.Label(
+            self.annealing_tab,
+            text=self.t("annealing_tab_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+
+        summary_frame = ttk.Frame(self.annealing_tab, style="White.TFrame")
+        summary_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(8, 0))
+        summary_frame.columnconfigure(0, weight=1)
+        self.annealing_status_label = ttk.Label(
+            summary_frame,
+            textvariable=self.playground_summary_var,
+            justify=tk.LEFT,
+            style="SectionValue.TLabel",
+            wraplength=1100,
+        )
+        self.annealing_status_label.grid(row=0, column=0, sticky="w")
+
+        self.annealing_text = ScrolledText(self.annealing_tab, wrap=tk.WORD)
+        self.annealing_text.grid(row=2, column=0, sticky="nsew", padx=10, pady=10)
+        self.annealing_text.configure(state=tk.DISABLED, font=("Menlo", 11))
+
+        figure_frame = ttk.Frame(self.annealing_tab, style="White.TFrame")
+        figure_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        figure_frame.columnconfigure(0, weight=1)
+        figure_frame.rowconfigure(0, weight=1)
+
+        self.annealing_figure = Figure(figsize=(10, 6), dpi=100)
+        self.annealing_axes = [
+            self.annealing_figure.add_subplot(221),
+            self.annealing_figure.add_subplot(222),
+            self.annealing_figure.add_subplot(223),
+            self.annealing_figure.add_subplot(224),
+        ]
+        self.annealing_canvas_widget = FigureCanvasTkAgg(self.annealing_figure, master=figure_frame)
+        self.annealing_canvas_widget.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
     def _build_detail_tab(self) -> None:
         """Tab fuer die detaillierte neuronale Einzelbetrachtung."""
@@ -1684,6 +2494,7 @@ class PlaygroundGUI:
         """Blendet Expertenfunktionen je nach Modus ein oder aus."""
 
         is_expert = self.mode_var.get() == "expert"
+        is_playground = self._app_mode() == "playground"
         for widget in self.expert_only_widgets:
             if is_expert:
                 widget.grid()
@@ -1693,7 +2504,15 @@ class PlaygroundGUI:
         if hasattr(self, "notebook"):
             try:
                 self.notebook.tab(self.stepper_tab, state="normal")
-                self.notebook.tab(self.compare_tab, state="normal" if is_expert else "hidden")
+                self.notebook.tab(
+                    self.compare_tab,
+                    state="normal" if (is_expert and not is_playground) else "hidden",
+                )
+                if hasattr(self, "annealing_tab"):
+                    self.notebook.tab(
+                        self.annealing_tab,
+                        state="normal" if is_playground else "hidden",
+                    )
             except tk.TclError:
                 pass
 
@@ -1972,6 +2791,8 @@ class PlaygroundGUI:
             self._update_neuron_dropdowns()
             self._update_sample_spinbox_range()
             self._prepare_custom_samples_for_benchmark()
+            if self._app_mode() == "playground":
+                self._initialize_playground_state(refresh_views=False)
             self._refresh_views()
         except Exception as exc:
             messagebox.showerror(self.t("load_error_title"), str(exc))
@@ -2183,7 +3004,10 @@ class PlaygroundGUI:
         self.current_layout = self.current_layout.replace_layer(layer_index, activation_name)
         self.model.layout = self.current_layout
         self.layout_string_var.set(self.current_layout.to_compact_spec())
-        self._refresh_views()
+        if self._app_mode() == "playground":
+            self._initialize_playground_state()
+        else:
+            self._refresh_views()
 
     def _apply_neuron_setting(self) -> None:
         """Setzt die Aktivierung eines einzelnen Hidden-Neurons."""
@@ -2197,7 +3021,10 @@ class PlaygroundGUI:
         self.model.layout = self.current_layout
         self.selected_hidden = (layer_index, neuron_index)
         self.layout_string_var.set(self.current_layout.to_compact_spec())
-        self._refresh_views()
+        if self._app_mode() == "playground":
+            self._initialize_playground_state()
+        else:
+            self._refresh_views()
 
     def _cycle_selected_neuron(self) -> None:
         """Schaltet das aktuell gewaehlte Neuron zur naechsten Aktivierung weiter."""
@@ -2211,7 +3038,10 @@ class PlaygroundGUI:
         self.selected_hidden = (layer_index, neuron_index)
         self.layout_string_var.set(self.current_layout.to_compact_spec())
         self.neuron_activation_var.set(self.current_layout.layers[layer_index][neuron_index])
-        self._refresh_views()
+        if self._app_mode() == "playground":
+            self._initialize_playground_state()
+        else:
+            self._refresh_views()
 
     def _select_from_controls(self) -> None:
         """Uebernimmt die aktuelle Dropdown-Auswahl als selektiertes Neuron."""
@@ -2249,6 +3079,118 @@ class PlaygroundGUI:
         if self.dataset is not None and self.dataset.name == "digits" and self.use_custom_sample_var.get():
             self._copy_current_digit_to_custom()
         self._refresh_views()
+
+    def _build_objective_config(self) -> ObjectiveConfig:
+        """Erzeugt die aktuelle Objective-Konfiguration fuer den Playground Mode."""
+
+        return ObjectiveConfig(
+            objective_name=self.objective_var.get(),
+            candidate_epochs=int(self.candidate_epochs_var.get()),
+            learning_rate=float(self.lr_var.get()),
+            batch_size=int(self.batch_size_var.get()),
+            weight_scale=float(self.weight_scale_var.get()),
+            random_state=int(self.seed_var.get()),
+            shuffle=bool(self.playground_shuffle_var.get()),
+        )
+
+    def _build_annealing_config(self) -> AnnealingConfig:
+        """Erzeugt die aktuelle Annealing-Konfiguration aus der GUI."""
+
+        neighborhood_operations = tuple(
+            operation
+            for operation, variable in self.playground_neighbor_vars.items()
+            if variable.get()
+        )
+        return AnnealingConfig(
+            start_temperature=float(self.start_temperature_var.get()),
+            cooling_schedule=self.cooling_schedule_var.get(),
+            cooling_parameter=float(self.cooling_parameter_var.get()),
+            iterations_per_temperature=int(self.iterations_per_temperature_var.get()),
+            max_steps=int(self.max_steps_var.get()),
+            min_temperature=float(self.min_temperature_var.get()),
+            neighborhood_operations=neighborhood_operations,
+        )
+
+    def _initialize_playground_state(self, refresh_views: bool = True) -> None:
+        """Initialisiert oder resettet den Simulated-Annealing-Lauf."""
+
+        if self.dataset is None or self.current_layout is None:
+            return
+        try:
+            evaluator = LayoutObjectiveEvaluator(self.dataset, self._build_objective_config())
+            runner = AnnealingRunner(
+                evaluator=evaluator,
+                config=self._build_annealing_config(),
+                random_state=int(self.seed_var.get()),
+            )
+            state = runner.initialize(self.current_layout)
+            self.annealing_runner = runner
+            self.annealing_state = state
+            self.annealing_last_step = None
+            self.annealing_last_candidate = None
+            self.model = state.current_evaluation.trained_model
+            self.current_layout = state.current_evaluation.layout
+            self.training_result = state.current_evaluation.training_result
+            self.completed_epochs = int(self.candidate_epochs_var.get())
+            self.playground_decision_var.set(
+                (
+                    "Startzustand bewertet. Jetzt kannst du einzelne SA-Schritte ausfuehren oder den kompletten Lauf starten."
+                    if not self._is_english()
+                    else "Start state evaluated. You can now execute individual SA steps or start the full run."
+                )
+            )
+            if refresh_views:
+                self._refresh_views()
+        except Exception as exc:
+            messagebox.showerror(self.t("annealing_error_title"), str(exc))
+
+    def _run_annealing_steps(self, step_count: int) -> None:
+        """Fuehrt mehrere SA-Schritte aus und aktualisiert die GUI danach."""
+
+        if self._app_mode() != "playground":
+            return
+        try:
+            if self.annealing_runner is None or self.annealing_state is None:
+                self._initialize_playground_state(refresh_views=False)
+            if self.annealing_runner is None or self.annealing_state is None:
+                return
+            executed_steps = self.annealing_runner.run_steps(step_count)
+            self.annealing_state = self.annealing_runner.state
+            if executed_steps:
+                self.annealing_last_step = executed_steps[-1]
+                self.annealing_last_candidate = executed_steps[-1].candidate_evaluation
+            if self.annealing_state is not None:
+                self.model = self.annealing_state.current_evaluation.trained_model
+                self.current_layout = self.annealing_state.current_evaluation.layout
+                self.training_result = self.annealing_state.current_evaluation.training_result
+                self.completed_epochs = int(self.candidate_epochs_var.get())
+            self._refresh_views()
+        except Exception as exc:
+            messagebox.showerror(self.t("annealing_error_title"), str(exc))
+
+    def _run_annealing_to_completion(self) -> None:
+        """Fuehrt den SA-Lauf bis zum Stopkriterium aus."""
+
+        if self._app_mode() != "playground":
+            return
+        try:
+            if self.annealing_runner is None or self.annealing_state is None:
+                self._initialize_playground_state(refresh_views=False)
+            if self.annealing_runner is None or self.annealing_state is None:
+                return
+            executed_steps = self.annealing_runner.run_until_complete()
+            self.annealing_state = self.annealing_runner.state
+            if executed_steps:
+                self.annealing_last_step = executed_steps[-1]
+                self.annealing_last_candidate = executed_steps[-1].candidate_evaluation
+            if self.annealing_state is not None:
+                self.model = self.annealing_state.current_evaluation.trained_model
+                self.current_layout = self.annealing_state.current_evaluation.layout
+                self.training_result = self.annealing_state.current_evaluation.training_result
+                self.completed_epochs = int(self.candidate_epochs_var.get())
+            self._refresh_views()
+        except Exception as exc:
+            messagebox.showerror(self.t("annealing_error_title"), str(exc))
 
     def _train_current_model(self) -> None:
         """Trainiert fuer die in der GUI eingestellte Zahl von Epochen."""
@@ -2300,6 +3242,7 @@ class PlaygroundGUI:
         self._update_training_plot()
         self._update_stepper_view()
         self._update_compare_text()
+        self._update_annealing_tab()
         self._redraw_network()
         self._update_help_text()
 
@@ -2308,6 +3251,35 @@ class PlaygroundGUI:
 
         benchmark = self.benchmark_var.get()
         selected_layer, selected_neuron = self.selected_hidden
+        if self._app_mode() == "playground":
+            if self._is_english():
+                self.workflow_summary_var.set(
+                    "1. Choose benchmark, hidden layers, and a start layout.\n"
+                    "2. Choose the objective and candidate training budget.\n"
+                    "3. Select which neighborhood moves are allowed.\n"
+                    "4. Configure temperature and cooling.\n"
+                    "5. Evaluate the start state.\n"
+                    "6. Run SA step by step and inspect why moves are accepted or rejected."
+                )
+                self.context_hint_var.set(
+                    "Playground Mode turns the layout into a search state. The current network view still "
+                    "shows one concrete sample, but the optimization itself is driven by validation metrics."
+                )
+            else:
+                self.workflow_summary_var.set(
+                    "1. Waehle Benchmark, Hidden-Layer und ein Startlayout.\n"
+                    "2. Lege Zielmetrik und Trainingsbudget pro Kandidat fest.\n"
+                    "3. Waehle erlaubte Nachbarschaftsoperationen.\n"
+                    "4. Konfiguriere Temperatur und Abkuehlung.\n"
+                    "5. Bewerte den Startzustand.\n"
+                    "6. Fuehre SA schrittweise aus und beobachte, warum Zustaende akzeptiert oder verworfen werden."
+                )
+                self.context_hint_var.set(
+                    "Im Playground Mode wird das Layout zu einem Suchzustand. Die Netzansicht zeigt weiterhin "
+                    "ein konkretes Sample, die Optimierung selbst wird aber von Validation-Metriken gesteuert."
+                )
+            return
+
         if self._is_english():
             self.workflow_summary_var.set(
                 "1. Choose a dataset and a sample.\n"
@@ -2424,6 +3396,29 @@ class PlaygroundGUI:
                     "You can already change layouts and inspect local computations."
                 )
             )
+            return
+
+        if self._app_mode() == "playground" and self.annealing_state is not None:
+            current_evaluation = self.annealing_state.current_evaluation
+            best_evaluation = self.annealing_state.best_evaluation
+            if self._is_english():
+                self.metrics_summary_var.set(
+                    f"Candidate epochs: {self.candidate_epochs_var.get()}\n"
+                    f"Current val acc:  {current_evaluation.val_accuracy:.4f}\n"
+                    f"Current val loss: {current_evaluation.val_loss:.4f}\n"
+                    f"Best val acc:     {best_evaluation.val_accuracy:.4f}\n"
+                    f"Best val loss:    {best_evaluation.val_loss:.4f}\n"
+                    f"Test acc (current): {current_evaluation.test_accuracy:.4f}"
+                )
+            else:
+                self.metrics_summary_var.set(
+                    f"Epochen pro Kandidat: {self.candidate_epochs_var.get()}\n"
+                    f"Aktuelle Val-Acc:   {current_evaluation.val_accuracy:.4f}\n"
+                    f"Aktueller Val-Loss: {current_evaluation.val_loss:.4f}\n"
+                    f"Beste Val-Acc:      {best_evaluation.val_accuracy:.4f}\n"
+                    f"Bester Val-Loss:    {best_evaluation.val_loss:.4f}\n"
+                    f"Test-Acc (aktuell): {current_evaluation.test_accuracy:.4f}"
+                )
             return
 
         history = self.training_result.history
@@ -3305,6 +4300,343 @@ class PlaygroundGUI:
         self.compare_text.insert("1.0", text)
         self.compare_text.configure(state=tk.DISABLED)
 
+    def _update_annealing_tab(self) -> None:
+        """Aktualisiert Text und Verlaufsgrafiken des SA-Tabs."""
+
+        if self._app_mode() != "playground" or self.annealing_text is None:
+            return
+
+        if self.annealing_state is None or self.annealing_runner is None:
+            self.playground_summary_var.set(
+                (
+                    "Noch kein SA-Lauf initialisiert."
+                    if not self._is_english()
+                    else "No SA run initialized yet."
+                )
+            )
+            self.playground_decision_var.set(
+                (
+                    "Bewerte zuerst den Startzustand."
+                    if not self._is_english()
+                    else "Evaluate the start state first."
+                )
+            )
+            self._set_annealing_text(
+                (
+                    "Noch keine Annealing-Historie verfuegbar."
+                    if not self._is_english()
+                    else "No annealing history available yet."
+                )
+            )
+            self._update_annealing_plot()
+            return
+
+        state = self.annealing_state
+        objective_name = self.objective_var.get()
+        if self._is_english():
+            self.playground_summary_var.set(
+                f"Step {state.step_index} | Temperature {state.current_temperature:.4f} | "
+                f"Current objective {state.current_evaluation.objective_value:.4f} | "
+                f"Best objective {state.best_evaluation.objective_value:.4f} | "
+                f"Acceptance rate {state.acceptance_rate:.3f} | Cache {self.annealing_runner.evaluator.cache_size()}"
+            )
+        else:
+            self.playground_summary_var.set(
+                f"Schritt {state.step_index} | Temperatur {state.current_temperature:.4f} | "
+                f"Aktuelles Ziel {state.current_evaluation.objective_value:.4f} | "
+                f"Bestes Ziel {state.best_evaluation.objective_value:.4f} | "
+                f"Akzeptanzrate {state.acceptance_rate:.3f} | Cache {self.annealing_runner.evaluator.cache_size()}"
+            )
+
+        if self.annealing_last_step is None:
+            self.playground_decision_var.set(
+                (
+                    f"Startlayout mit Objective '{objective_name}' bewertet."
+                    if not self._is_english()
+                    else f"Start layout evaluated with objective '{objective_name}'."
+                )
+            )
+        else:
+            self.playground_decision_var.set(self._annealing_reason_text(self.annealing_last_step))
+
+        self._set_annealing_text(self._build_annealing_text())
+        self._update_annealing_plot()
+
+    def _set_annealing_text(self, text: str) -> None:
+        """Schreibt Text in den Annealing-Tab."""
+
+        if self.annealing_text is None:
+            return
+        self.annealing_text.configure(state=tk.NORMAL)
+        self.annealing_text.delete("1.0", tk.END)
+        self.annealing_text.insert("1.0", text)
+        self.annealing_text.configure(state=tk.DISABLED)
+
+    def _build_annealing_text(self) -> str:
+        """Formatiert die aktuelle SA-Situation als Textbericht."""
+
+        if self.annealing_state is None:
+            return (
+                "Noch kein SA-Lauf initialisiert."
+                if not self._is_english()
+                else "No SA run initialized yet."
+            )
+
+        state = self.annealing_state
+        current_layout_text = render_layout(
+            state.current_evaluation.layout,
+            title="Aktueller Zustand" if not self._is_english() else "Current State",
+        )
+        best_layout_text = render_layout(
+            state.best_evaluation.layout,
+            title="Bester Zustand" if not self._is_english() else "Best State",
+        )
+        lines = [
+            "Simulated Annealing" if self._is_english() else "Simulated Annealing",
+            "===================",
+            "",
+            (
+                f"Objective: {self.objective_var.get()}"
+                if self._is_english()
+                else f"Zielmetrik: {self.objective_var.get()}"
+            ),
+            (
+                f"Current layout: {state.current_evaluation.layout.to_compact_spec()}"
+                if self._is_english()
+                else f"Aktuelles Layout: {state.current_evaluation.layout.to_compact_spec()}"
+            ),
+            (
+                f"Best layout:    {state.best_evaluation.layout.to_compact_spec()}"
+                if self._is_english()
+                else f"Bestes Layout:  {state.best_evaluation.layout.to_compact_spec()}"
+            ),
+            (
+                f"Current objective value: {state.current_evaluation.objective_value:.6f}"
+                if self._is_english()
+                else f"Aktueller Zielwert: {state.current_evaluation.objective_value:.6f}"
+            ),
+            (
+                f"Best objective value:    {state.best_evaluation.objective_value:.6f}"
+                if self._is_english()
+                else f"Bester Zielwert:    {state.best_evaluation.objective_value:.6f}"
+            ),
+            "",
+        ]
+
+        if self.annealing_last_step is not None:
+            step = self.annealing_last_step
+            lines.extend(
+                [
+                    "Latest decision" if self._is_english() else "Letzte Entscheidung",
+                    "----------------" if self._is_english() else "-------------------",
+                    self._annealing_reason_text(step),
+                    (
+                        f"Neighbor: {step.neighbor_label}"
+                        if self._is_english()
+                        else f"Nachbar: {step.neighbor_label}"
+                    ),
+                    (
+                        f"Old comparable score: {step.previous_evaluation.comparable_score:.6f}"
+                        if self._is_english()
+                        else f"Alter Vergleichsscore: {step.previous_evaluation.comparable_score:.6f}"
+                    ),
+                    (
+                        f"Candidate comparable score: {step.candidate_evaluation.comparable_score:.6f}"
+                        if self._is_english()
+                        else f"Kandidaten-Score: {step.candidate_evaluation.comparable_score:.6f}"
+                    ),
+                    f"Delta = {step.delta:+.6f}",
+                    f"T = {step.temperature:.6f}",
+                    (
+                        f"Acceptance probability = {step.acceptance_probability:.6f}"
+                        if self._is_english()
+                        else f"Akzeptanzwahrscheinlichkeit = {step.acceptance_probability:.6f}"
+                    ),
+                    (
+                        f"Random draw = {step.random_draw:.6f}"
+                        if self._is_english()
+                        else f"Zufallszahl = {step.random_draw:.6f}"
+                    ),
+                    "",
+                ]
+            )
+
+            candidate_title = "Candidate Layout" if self._is_english() else "Kandidaten-Layout"
+            lines.append(render_layout(step.candidate_layout, title=candidate_title))
+            lines.append("")
+            if step.previous_layout.hidden_sizes == step.candidate_layout.hidden_sizes:
+                diff_title = "Layout-Diff" if not self._is_english() else "Layout Diff"
+                lines.append(diff_title)
+                lines.append("-" * len(diff_title))
+                lines.append(render_layout_diff(step.previous_layout, step.candidate_layout))
+                lines.append("")
+
+        if state.start_evaluation.layout.hidden_sizes == state.best_evaluation.layout.hidden_sizes:
+            title = "Start vs. Best" if self._is_english() else "Start vs. Best"
+            lines.append(title)
+            lines.append("-" * len(title))
+            lines.append(render_layout_diff(state.start_evaluation.layout, state.best_evaluation.layout))
+            lines.append("")
+
+        if self.annealing_runner is not None:
+            stop_reasons = annealing_stop_reasons(
+                state=state,
+                config=self.annealing_runner.config,
+                neighbor_count=len(
+                    generate_neighbors(
+                        state.current_evaluation.layout,
+                        self.annealing_runner.config.neighborhood_operations,
+                    )
+                ),
+            )
+            if stop_reasons:
+                lines.extend(
+                    [
+                        "Stop Reasons" if self._is_english() else "Stopgruende",
+                        "------------" if self._is_english() else "-----------",
+                    ]
+                )
+                for reason in stop_reasons:
+                    if reason == "max_steps_reached":
+                        lines.append(
+                            "Maximum number of steps reached."
+                            if self._is_english()
+                            else "Maximale Schrittzahl erreicht."
+                        )
+                    elif reason == "temperature_below_threshold":
+                        lines.append(
+                            "Temperature is at or below the minimum threshold."
+                            if self._is_english()
+                            else "Temperatur liegt auf oder unter der Mindestschwelle."
+                        )
+                    elif reason == "no_neighbors":
+                        lines.append(
+                            "No further neighbors can be generated for the current search space."
+                            if self._is_english()
+                            else "Im aktuellen Suchraum koennen keine weiteren Nachbarn erzeugt werden."
+                        )
+                lines.append("")
+
+        lines.extend([current_layout_text, "", best_layout_text])
+        return "\n".join(lines)
+
+    def _annealing_reason_text(self, step: AnnealingStep) -> str:
+        """Erzeugt einen didaktischen Klartext fuer eine SA-Entscheidung."""
+
+        if step.reason_code == "improved_or_equal":
+            return (
+                "Der Kandidat war mindestens so gut wie der aktuelle Zustand und wurde deshalb direkt akzeptiert."
+                if not self._is_english()
+                else "The candidate was at least as good as the current state and was therefore accepted immediately."
+            )
+        if step.reason_code == "accepted_worse":
+            return (
+                f"Der Kandidat war schlechter, wurde aber wegen der Temperatur noch akzeptiert "
+                f"({step.random_draw:.4f} <= {step.acceptance_probability:.4f})."
+                if not self._is_english()
+                else (
+                    f"The candidate was worse but was still accepted because of the current temperature "
+                    f"({step.random_draw:.4f} <= {step.acceptance_probability:.4f})."
+                )
+            )
+        return (
+            f"Der Kandidat war schlechter und wurde verworfen "
+            f"({step.random_draw:.4f} > {step.acceptance_probability:.4f})."
+            if not self._is_english()
+            else (
+                f"The candidate was worse and was rejected "
+                f"({step.random_draw:.4f} > {step.acceptance_probability:.4f})."
+            )
+        )
+
+    def _update_annealing_plot(self) -> None:
+        """Aktualisiert die Verlaufsgrafiken im SA-Tab."""
+
+        if self.annealing_figure is None or self.annealing_canvas_widget is None:
+            return
+
+        for axis in self.annealing_axes:
+            axis.clear()
+
+        if self.annealing_state is None:
+            for axis in self.annealing_axes:
+                axis.text(
+                    0.5,
+                    0.5,
+                    "Noch kein SA-Lauf" if not self._is_english() else "No SA run yet",
+                    ha="center",
+                    va="center",
+                )
+                axis.set_axis_off()
+            self.annealing_figure.tight_layout()
+            self.annealing_canvas_widget.draw_idle()
+            return
+
+        state = self.annealing_state
+        score_axis, temperature_axis, probability_axis, rate_axis = self.annealing_axes
+
+        current_scores = [state.start_evaluation.comparable_score]
+        best_scores = [state.start_evaluation.comparable_score]
+        temperatures = []
+        probabilities = []
+        accepted_flags = []
+        acceptance_rates = [0.0]
+
+        current_score = state.start_evaluation.comparable_score
+        best_score = state.start_evaluation.comparable_score
+        accepted_count = 0
+        for step in state.history:
+            temperatures.append(step.temperature)
+            probabilities.append(step.acceptance_probability)
+            accepted_flags.append(1.0 if step.accepted else 0.0)
+            if step.accepted:
+                current_score = step.candidate_evaluation.comparable_score
+                accepted_count += 1
+            best_score = min(best_score, step.best_score_after_step)
+            current_scores.append(current_score)
+            best_scores.append(best_score)
+            acceptance_rates.append(accepted_count / step.step_index)
+
+        score_x = np.arange(len(current_scores))
+        score_axis.plot(score_x, current_scores, label="Current", linewidth=2)
+        score_axis.plot(score_x, best_scores, label="Best", linewidth=2)
+        score_axis.set_title("Comparable Score")
+        score_axis.set_xlabel("Step" if self._is_english() else "Schritt")
+        score_axis.grid(alpha=0.3)
+        score_axis.legend()
+
+        if temperatures:
+            temp_x = np.arange(1, len(temperatures) + 1)
+            temperature_axis.plot(temp_x, temperatures, linewidth=2, color="#2563eb")
+            temperature_axis.set_title("Temperature")
+            temperature_axis.set_xlabel("Step" if self._is_english() else "Schritt")
+            temperature_axis.grid(alpha=0.3)
+            probability_axis.plot(temp_x, probabilities, linewidth=2, color="#f59e0b")
+            probability_axis.scatter(temp_x, accepted_flags, color="#16a34a", s=20)
+            probability_axis.set_title(
+                "Acceptance Probability"
+                if self._is_english()
+                else "Akzeptanzwahrscheinlichkeit"
+            )
+            probability_axis.set_xlabel("Step" if self._is_english() else "Schritt")
+            probability_axis.set_ylim(-0.05, 1.05)
+            probability_axis.grid(alpha=0.3)
+            rate_axis.plot(score_x, acceptance_rates, linewidth=2, color="#7c3aed")
+            rate_axis.set_title(
+                "Acceptance Rate" if self._is_english() else "Akzeptanzrate"
+            )
+            rate_axis.set_xlabel("Step" if self._is_english() else "Schritt")
+            rate_axis.set_ylim(0.0, 1.0)
+            rate_axis.grid(alpha=0.3)
+        else:
+            empty_text = "Nur Startzustand" if not self._is_english() else "Only start state"
+            for axis in (temperature_axis, probability_axis, rate_axis):
+                axis.text(0.5, 0.5, empty_text, ha="center", va="center")
+                axis.set_axis_off()
+
+        self.annealing_figure.tight_layout()
+        self.annealing_canvas_widget.draw_idle()
+
     def _confusion_matrix(
         self,
         y_true: np.ndarray,
@@ -3437,26 +4769,53 @@ class PlaygroundGUI:
         """Aktualisiert den Lernhilfe-Tab passend zum aktuellen Kontext."""
 
         benchmark = self.benchmark_var.get()
+        is_playground = self._app_mode() == "playground"
         if self._is_english():
+            workflow_lines = (
+                [
+                    "1. Choose a benchmark or the test_activation mode.",
+                    "2. Use the 'Input & Target' tab to inspect the current data flowing into the network.",
+                    "3. Change activations per layer or per neuron.",
+                    "4. Train in small steps with 1 or 10 epochs.",
+                    "5. Observe how prediction, loss, and activations change.",
+                    "6. Click hidden neurons and inspect their local computation.",
+                ]
+                if not is_playground
+                else [
+                    "1. Choose a benchmark, hidden layers, and a start layout.",
+                    "2. Decide how each candidate is scored: validation loss or validation accuracy.",
+                    "3. Choose which neighborhood moves are allowed in the search.",
+                    "4. Set temperature, cooling, and the training budget per candidate.",
+                    "5. Evaluate the start state and inspect the initial objective value.",
+                    "6. Run simulated annealing step by step and compare current, candidate, and best state.",
+                ]
+            )
+            core_lines = (
+                [
+                    "z = weighted sum + bias",
+                    "a = activation function(z)",
+                    "Training changes weights and biases, not the dataset.",
+                    "The currently shown sample is an analysis window, not the full training process.",
+                ]
+                if not is_playground
+                else [
+                    "State = one concrete activation layout.",
+                    "Neighbor = a small modification of that layout.",
+                    "Objective = validation loss or validation accuracy after short candidate training.",
+                    "Temperature controls how often worse candidates may still be accepted.",
+                ]
+            )
             help_lines = [
                 "Learning Help",
                 "=============",
                 "",
                 "Recommended Workflow",
                 "--------------------",
-                "1. Choose a benchmark or the test_activation mode.",
-                "2. Use the 'Input & Target' tab to inspect the current data flowing into the network.",
-                "3. Change activations per layer or per neuron.",
-                "4. Train in small steps with 1 or 10 epochs.",
-                "5. Observe how prediction, loss, and activations change.",
-                "6. Click hidden neurons and inspect their local computation.",
+                *workflow_lines,
                 "",
                 "Core Concepts",
                 "-------------",
-                "z = weighted sum + bias",
-                "a = activation function(z)",
-                "Training changes weights and biases, not the dataset.",
-                "The currently shown sample is an analysis window, not the full training process.",
+                *core_lines,
                 "",
                 "Current Benchmark",
                 "-----------------",
@@ -3467,7 +4826,20 @@ class PlaygroundGUI:
                 *self._parameter_help_lines(),
                 "",
             ]
-            if benchmark == "digits":
+            if is_playground:
+                help_lines.extend(
+                    [
+                        "Playground Mode Notes",
+                        "---------------------",
+                        "The visible network still shows one concrete sample, but simulated annealing optimizes layouts using validation metrics over the whole benchmark.",
+                        "The current state is the layout currently used for inspection and for the current score.",
+                        "The candidate state is the newly proposed neighbor before acceptance or rejection.",
+                        "The best state is the best layout found so far during the search.",
+                        "The annealing plots track score, temperature, acceptance probability, and cumulative acceptance rate.",
+                        "",
+                    ]
+                )
+            elif benchmark == "digits":
                 help_lines.extend(
                     [
                         "Digits-Specific Notes",
@@ -3507,32 +4879,69 @@ class PlaygroundGUI:
                 [
                     "Useful Questions",
                     "----------------",
-                    "Which activations produce large or small outputs for this sample?",
-                    "Which input features influence the selected neuron most strongly?",
-                    "How does training change class output and hidden activations?",
-                    "When does sigmoid saturate, and when is ReLU more sparse?",
+                    *(
+                        [
+                            "Which activations produce large or small outputs for this sample?",
+                            "Which input features influence the selected neuron most strongly?",
+                            "How does training change class output and hidden activations?",
+                            "When does sigmoid saturate, and when is ReLU more sparse?",
+                        ]
+                        if not is_playground
+                        else [
+                            "Which neighborhood operations produce meaningful alternative layouts?",
+                            "Is the objective changing because the layout improved or because candidate training is noisy?",
+                            "How quickly does the temperature become restrictive for worse states?",
+                            "Does the best state really outperform the start layout on validation and test metrics?",
+                        ]
+                    ),
                 ]
             )
         else:
+            workflow_lines = (
+                [
+                    "1. Waehle einen Benchmark oder den test_activation-Modus.",
+                    "2. Schaue im Tab 'Input & Ziel', welche Daten aktuell ins Netz fliessen.",
+                    "3. Veraendere Aktivierungen pro Layer oder pro Neuron.",
+                    "4. Trainiere in kleinen Schritten mit 1 oder 10 Epochen.",
+                    "5. Beobachte, wie sich Vorhersage, Loss und Aktivierungen veraendern.",
+                    "6. Klicke auf einzelne Hidden-Neuronen und lies ihre lokale Rechnung.",
+                ]
+                if not is_playground
+                else [
+                    "1. Waehle Benchmark, Hidden-Layer und ein Startlayout.",
+                    "2. Lege fest, wie Kandidaten bewertet werden: Validation-Loss oder Validation-Accuracy.",
+                    "3. Waehle erlaubte Nachbarschaftsoperationen fuer die Suche.",
+                    "4. Setze Temperatur, Abkuehlung und Trainingsbudget pro Kandidat.",
+                    "5. Bewerte den Startzustand und betrachte den ersten Zielwert.",
+                    "6. Fuehre Simulated Annealing schrittweise aus und vergleiche aktuellen Zustand, Kandidat und bestes Layout.",
+                ]
+            )
+            core_lines = (
+                [
+                    "z = gewichtete Summe + bias",
+                    "a = Aktivierungsfunktion(z)",
+                    "Trainieren aendert Gewichte und Biases, nicht den Datensatz.",
+                    "Das aktuell gezeigte Sample ist ein Analysefenster, nicht der ganze Trainingsprozess.",
+                ]
+                if not is_playground
+                else [
+                    "Zustand = ein konkretes Aktivierungs-Layout.",
+                    "Nachbar = eine kleine Aenderung dieses Layouts.",
+                    "Zielmetrik = Validation-Loss oder Validation-Accuracy nach kurzem Kandidatentraining.",
+                    "Die Temperatur steuert, wie oft auch schlechtere Kandidaten noch akzeptiert werden duerfen.",
+                ]
+            )
             help_lines = [
                 "Lernhilfe fuer den Playground",
                 "=============================",
                 "",
                 "Empfohlener Ablauf",
                 "------------------",
-                "1. Waehle einen Benchmark oder den test_activation-Modus.",
-                "2. Schaue im Tab 'Input & Ziel', welche Daten aktuell ins Netz fliessen.",
-                "3. Veraendere Aktivierungen pro Layer oder pro Neuron.",
-                "4. Trainiere in kleinen Schritten mit 1 oder 10 Epochen.",
-                "5. Beobachte, wie sich Vorhersage, Loss und Aktivierungen veraendern.",
-                "6. Klicke auf einzelne Hidden-Neuronen und lies ihre lokale Rechnung.",
+                *workflow_lines,
                 "",
                 "Wichtige Konzepte",
                 "-----------------",
-                "z = gewichtete Summe + bias",
-                "a = Aktivierungsfunktion(z)",
-                "Trainieren aendert Gewichte und Biases, nicht den Datensatz.",
-                "Das aktuell gezeigte Sample ist ein Analysefenster, nicht der ganze Trainingsprozess.",
+                *core_lines,
                 "",
                 "Aktueller Benchmark",
                 "-------------------",
@@ -3543,7 +4952,20 @@ class PlaygroundGUI:
                 *self._parameter_help_lines(),
                 "",
             ]
-            if benchmark == "digits":
+            if is_playground:
+                help_lines.extend(
+                    [
+                        "Hinweise zum Playground Mode",
+                        "----------------------------",
+                        "Die sichtbare Netzwerkansicht zeigt weiterhin ein einzelnes Sample, aber Simulated Annealing optimiert Layouts ueber Validation-Metriken des gesamten Benchmarks.",
+                        "Der aktuelle Zustand ist das Layout, das gerade fuer Anzeige und Score gilt.",
+                        "Der Kandidat ist der neu vorgeschlagene Nachbar vor Annahme oder Verwerfung.",
+                        "Der beste Zustand ist das beste bisher gefundene Layout.",
+                        "Die Annealing-Plots zeigen Score, Temperatur, Akzeptanzwahrscheinlichkeit und die kumulative Akzeptanzrate.",
+                        "",
+                    ]
+                )
+            elif benchmark == "digits":
                 help_lines.extend(
                     [
                         "Digits-spezifische Hinweise",
@@ -3583,10 +5005,21 @@ class PlaygroundGUI:
                 [
                     "Beobachtungsfragen",
                     "------------------",
-                    "Welche Aktivierungen fuehren bei diesem Sample zu grossen oder kleinen Ausgaben?",
-                    "Welche Eingabefeatures beeinflussen das selektierte Neuron am staerksten?",
-                    "Wie veraendert Training die Klassenausgabe und die Hidden-Aktivierungen?",
-                    "Wann wirkt sigmoid eher saettigend, wann ist ReLU sparsamer?",
+                    *(
+                        [
+                            "Welche Aktivierungen fuehren bei diesem Sample zu grossen oder kleinen Ausgaben?",
+                            "Welche Eingabefeatures beeinflussen das selektierte Neuron am staerksten?",
+                            "Wie veraendert Training die Klassenausgabe und die Hidden-Aktivierungen?",
+                            "Wann wirkt sigmoid eher saettigend, wann ist ReLU sparsamer?",
+                        ]
+                        if not is_playground
+                        else [
+                            "Welche Nachbarschaftsoperationen liefern sinnvolle alternative Layouts?",
+                            "Aendert sich die Zielmetrik wirklich wegen eines besseren Layouts oder nur wegen leichtem Trainingsrauschen?",
+                            "Wie schnell wird die Temperatur fuer schlechtere Kandidaten restriktiv?",
+                            "Schlaegt der beste Zustand das Startlayout wirklich auf Validation- und Testmetriken?",
+                        ]
+                    ),
                 ]
             )
 
@@ -3693,8 +5126,8 @@ class PlaygroundGUI:
     def _parameter_help_lines(self) -> list[str]:
         """Liefert ein kompaktes Lexikon der veraenderbaren GUI-Parameter."""
 
-        return (
-            [
+        if self._is_english():
+            lines = [
                 "Benchmark: selects dataset, number of classes, and the kind of input representation.",
                 "Hidden layers: number of neurons in the hidden part of the network. More neurons or layers mean more capacity but also more visual complexity.",
                 "Data split: determines which split the visible analysis sample comes from. Training itself still uses the training split.",
@@ -3704,38 +5137,81 @@ class PlaygroundGUI:
                 "Set whole layer: applies one activation function to a complete hidden layer.",
                 "Layer / Neuron / Activation / Set neuron: selects and changes one specific hidden neuron.",
                 "Cycle: advances the selected neuron through relu -> tanh -> sigmoid -> leaky_relu.",
+                "Workspace: demo focuses on one model and its behavior, playground focuses on simulated annealing over activation layouts.",
                 "Mode: beginner hides complexity, expert shows deeper controls and comparison tools.",
-                "Epochs: number of full passes through the training split.",
-                "Learning rate: size of each learning step.",
-                "Batch size: number of training examples processed together per update.",
-                "Weight scale: magnitude of the random initial weights.",
-                "Seed: makes splits and initialization reproducible.",
-                "Reinitialize: resets the model with current settings and fresh initial weights.",
-                "1 epoch / 10 epochs / Train N epochs: stepwise training controls for observation.",
-                "Store as baseline: freezes a reference state for later comparison.",
             ]
-            if self._is_english()
-            else [
-                "Benchmark: waehlt Datensatz und damit auch Art der Eingaben und Anzahl der Klassen.",
-                "Hidden-Layer: Anzahl der Neuronen in den versteckten Schichten. Mehr Neuronen oder mehr Layer bedeuten mehr Kapazitaet, aber auch mehr Unuebersicht.",
-                "Datensplit: bestimmt, aus welchem Split das aktuell sichtbare Analyse-Sample stammt. Das Training selbst verwendet weiterhin den Trainingssplit.",
-                "Sample-Index: waehlt genau ein Beispiel aus, das du im Netz verfolgst.",
-                "Eigenes Sample verwenden: erlaubt bei digits und test_activation manuelle Eingaben, um gezielt Reaktionen des Netzes zu studieren.",
-                "Analyse-Ziel: setzt das Ziel, gegen das der Loss in der Ansicht berechnet wird. So kann man auch absichtlich ein 'falsches' Ziel untersuchen.",
-                "Layer auf ...: setzt die Aktivierungsfunktion fuer einen kompletten Hidden-Layer auf einen Schlag.",
-                "Layer / Neuron / Aktivierung / Neuron setzen: waehlt ein einzelnes Hidden-Neuron aus und aendert gezielt dessen Aktivierungsfunktion.",
-                "Cycle: schaltet das ausgewaehlte Neuron in der festen Reihenfolge relu -> tanh -> sigmoid -> leaky_relu weiter.",
-                "Modus: Einsteiger blendet Komplexitaet aus, Experte zeigt tiefe Steuerung und Vergleichswerkzeuge.",
-                "Epochen: wie oft das Training den gesamten Trainingssplit durchlaeuft.",
-                "Lernrate: Schrittweite des Lernens. Zu klein lernt langsam, zu gross kann instabil werden.",
-                "Batch-Groesse: wie viele Trainingsbeispiele pro Gewichtsupdate gemeinsam verarbeitet werden.",
-                "Weight-Scale: Groessenordnung der zufaelligen Startgewichte. Beeinflusst, wie stark Aktivierungen schon zu Beginn ausschlagen.",
-                "Seed: sorgt fuer reproduzierbare Daten-Splits und reproduzierbare Initialisierung.",
-                "Neu initialisieren: setzt das Modell mit aktuellen Einstellungen und neuen Startgewichten zurueck.",
-                "1 Epoche / 10 Epochen / N Epochen trainieren: trainiert schrittweise, damit man Veraenderungen beobachten kann.",
-                "Als Baseline speichern: friert einen Referenzzustand ein, mit dem das aktuelle Experiment spaeter verglichen wird.",
-            ]
-        )
+            if self._app_mode() == "playground":
+                lines.extend(
+                    [
+                        "Objective: decides what is optimized, for example validation loss or validation accuracy.",
+                        "Epochs per candidate: how long each layout candidate is trained before it is scored.",
+                        "Learning rate / Batch size / Weight scale / Seed: define how every candidate is trained and keep candidate comparisons fair.",
+                        "Neighborhoods: decide what kinds of local layout changes simulated annealing may propose.",
+                        "Start temperature: initial openness to worse candidates.",
+                        "Cooling schedule: rule for how temperature decreases over time.",
+                        "Cooling parameter: strength of that decrease; its exact meaning depends on the chosen schedule.",
+                        "Iterations per temperature: how many SA steps are executed before temperature is reduced once.",
+                        "Maximum steps: hard upper bound for the run length.",
+                        "Minimum temperature: stop threshold once the search has cooled down enough.",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        "Epochs: number of full passes through the training split.",
+                        "Learning rate: size of each learning step.",
+                        "Batch size: number of training examples processed together per update.",
+                        "Weight scale: magnitude of the random initial weights.",
+                        "Seed: makes splits and initialization reproducible.",
+                        "Reinitialize: resets the model with current settings and fresh initial weights.",
+                        "1 epoch / 10 epochs / Train N epochs: stepwise training controls for observation.",
+                        "Store as baseline: freezes a reference state for later comparison.",
+                    ]
+                )
+            return lines
+
+        lines = [
+            "Benchmark: waehlt Datensatz und damit auch Art der Eingaben und Anzahl der Klassen.",
+            "Hidden-Layer: Anzahl der Neuronen in den versteckten Schichten. Mehr Neuronen oder mehr Layer bedeuten mehr Kapazitaet, aber auch mehr Unuebersicht.",
+            "Datensplit: bestimmt, aus welchem Split das aktuell sichtbare Analyse-Sample stammt. Das Training selbst verwendet weiterhin den Trainingssplit.",
+            "Sample-Index: waehlt genau ein Beispiel aus, das du im Netz verfolgst.",
+            "Eigenes Sample verwenden: erlaubt bei digits und test_activation manuelle Eingaben, um gezielt Reaktionen des Netzes zu studieren.",
+            "Analyse-Ziel: setzt das Ziel, gegen das der Loss in der Ansicht berechnet wird. So kann man auch absichtlich ein 'falsches' Ziel untersuchen.",
+            "Layer auf ...: setzt die Aktivierungsfunktion fuer einen kompletten Hidden-Layer auf einen Schlag.",
+            "Layer / Neuron / Aktivierung / Neuron setzen: waehlt ein einzelnes Hidden-Neuron aus und aendert gezielt dessen Aktivierungsfunktion.",
+            "Cycle: schaltet das ausgewaehlte Neuron in der festen Reihenfolge relu -> tanh -> sigmoid -> leaky_relu weiter.",
+            "Arbeitsmodus: Demo beobachtet ein einzelnes Modell und sein Verhalten, Playground optimiert Aktivierungs-Layouts mit Simulated Annealing.",
+            "Modus: Einsteiger blendet Komplexitaet aus, Experte zeigt tiefe Steuerung und Vergleichswerkzeuge.",
+        ]
+        if self._app_mode() == "playground":
+            lines.extend(
+                [
+                    "Zielmetrik: legt fest, was optimiert wird, zum Beispiel Validation-Loss oder Validation-Accuracy.",
+                    "Epochen pro Kandidat: wie lange jedes Layout trainiert wird, bevor es bewertet wird.",
+                    "Lernrate / Batch-Groesse / Weight-Scale / Seed: definieren, wie jeder Kandidat trainiert wird und halten Kandidatenvergleiche fair.",
+                    "Nachbarschaften: bestimmen, welche lokalen Layout-Aenderungen Simulated Annealing vorschlagen darf.",
+                    "Starttemperatur: anfaengliche Offenheit gegenueber schlechteren Kandidaten.",
+                    "Abkuehlung: Regel, nach der die Temperatur ueber die Zeit sinkt.",
+                    "Cooling-Parameter: Staerke dieses Abkuehlens; die genaue Bedeutung haengt vom gewaehlten Schedule ab.",
+                    "Iterationen pro Temperatur: wie viele SA-Schritte pro Temperaturniveau ausgefuehrt werden.",
+                    "Maximale Schritte: harte Obergrenze fuer die Laenge des Suchlaufs.",
+                    "Mindesttemperatur: Stoppschwelle, sobald die Suche weit genug abgekuehlt ist.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "Epochen: wie oft das Training den gesamten Trainingssplit durchlaeuft.",
+                    "Lernrate: Schrittweite des Lernens. Zu klein lernt langsam, zu gross kann instabil werden.",
+                    "Batch-Groesse: wie viele Trainingsbeispiele pro Gewichtsupdate gemeinsam verarbeitet werden.",
+                    "Weight-Scale: Groessenordnung der zufaelligen Startgewichte. Beeinflusst, wie stark Aktivierungen schon zu Beginn ausschlagen.",
+                    "Seed: sorgt fuer reproduzierbare Daten-Splits und reproduzierbare Initialisierung.",
+                    "Neu initialisieren: setzt das Modell mit aktuellen Einstellungen und neuen Startgewichten zurueck.",
+                    "1 Epoche / 10 Epochen / N Epochen trainieren: trainiert schrittweise, damit man Veraenderungen beobachten kann.",
+                    "Als Baseline speichern: friert einen Referenzzustand ein, mit dem das aktuelle Experiment spaeter verglichen wird.",
+                ]
+            )
+        return lines
 
     def _program_guide_text(self) -> str:
         """Liefert eine einfache A-Z-Anleitung fuer das gesamte Programm."""
@@ -3749,7 +5225,13 @@ class PlaygroundGUI:
                     "What this program is",
                     "--------------------",
                     "This program is a compact playground for small neural networks with editable activation layouts.",
-                    "It allows you to inspect how architecture, activations, inputs, and training interact.",
+                    "It allows you to inspect how architecture, activations, inputs, training, and optimization interact.",
+                    "",
+                    "Two workspaces",
+                    "--------------",
+                    "Demo Mode is for understanding a single network in detail: input, prediction, loss, hidden activations, and training behavior.",
+                    "Playground Mode uses the same benchmark and model setup but adds simulated annealing over activation layouts.",
+                    "The workspace setting therefore changes the main goal of the interface, not only its level of detail.",
                     "",
                     "Main idea",
                     "---------",
@@ -3757,8 +5239,8 @@ class PlaygroundGUI:
                     "Each hidden neuron applies one activation function: relu, tanh, sigmoid, or leaky_relu.",
                     "You can assign activations per full layer or per individual neuron.",
                     "",
-                    "How to work with it",
-                    "-------------------",
+                    "How to work with Demo Mode",
+                    "--------------------------",
                     "1. Choose a benchmark.",
                     "2. Choose how many hidden layers and neurons you want.",
                     "3. Inspect the current sample in the input view.",
@@ -3767,9 +5249,19 @@ class PlaygroundGUI:
                     "6. Compare prediction, loss, and hidden activations before and after training.",
                     "7. Click a hidden neuron to inspect its local formula.",
                     "",
+                    "How to work with Playground Mode",
+                    "--------------------------------",
+                    "1. Choose a benchmark, hidden layers, and a start layout.",
+                    "2. Choose an objective: validation loss or validation accuracy.",
+                    "3. Decide which neighborhood moves are allowed.",
+                    "4. Set temperature, cooling rule, candidate epochs, and stop limits.",
+                    "5. Evaluate the start state.",
+                    "6. Run simulated annealing step by step or to completion.",
+                    "7. Compare current state, candidate state, and best state.",
+                    "",
                     "What the left side does",
                     "-----------------------",
-                    "The left side is the control strip. It defines dataset, sample, layout, and training settings.",
+                    "The left side is the control strip. It defines dataset, sample, layout, and either training or annealing settings.",
                     "Beginner mode keeps the essential controls visible.",
                     "Expert mode adds layer changes, neuron-level edits, and comparison tools.",
                     "",
@@ -3783,6 +5275,12 @@ class PlaygroundGUI:
                     "Training changes weights and biases.",
                     "It does not change the dataset and it does not directly change the activation layout.",
                     "The displayed sample is only an inspection window.",
+                    "",
+                    "What simulated annealing changes",
+                    "--------------------------------",
+                    "Simulated annealing does not directly optimize weights. It optimizes the activation layout.",
+                    "Each candidate layout is trained briefly from scratch and then scored on validation data.",
+                    "A better candidate is accepted directly. A worse candidate may still be accepted while the temperature is high.",
                     "",
                     "What the test_activation mode is for",
                     "------------------------------------",
@@ -3799,6 +5297,11 @@ class PlaygroundGUI:
                     "This tab breaks one visible sample into the main steps of the forward pass and the backward pass.",
                     "It helps you see what happens mathematically inside the network.",
                     "",
+                    "What the Annealing tab is for",
+                    "-----------------------------",
+                    "This tab is available in Playground Mode.",
+                    "It shows the SA history, current state, candidate, best state, score development, temperature, and acceptance behavior.",
+                    "",
                     "What comes later",
                     "----------------",
                     "The current codebase already contains layout operations and neighbor generation.",
@@ -3813,7 +5316,13 @@ class PlaygroundGUI:
                 "Was dieses Programm ist",
                 "-----------------------",
                 "Dieses Programm ist ein kompakter Playground fuer kleine neuronale Netze mit veraenderbaren Aktivierungs-Layouts.",
-                "Es zeigt, wie Architektur, Aktivierungen, Eingaben und Training zusammenwirken.",
+                "Es zeigt, wie Architektur, Aktivierungen, Eingaben, Training und Optimierung zusammenwirken.",
+                "",
+                "Zwei Arbeitsmodi",
+                "----------------",
+                "Demo Mode dient dazu, ein einzelnes Netz im Detail zu verstehen: Eingabe, Vorhersage, Loss, Hidden-Aktivierungen und Trainingsverhalten.",
+                "Playground Mode nutzt dieselbe Benchmark- und Modellbasis, erweitert sie aber um Simulated Annealing ueber Aktivierungs-Layouts.",
+                "Der Arbeitsmodus aendert also das Hauptziel der Oberflaeche und nicht nur den Detailgrad.",
                 "",
                 "Grundidee",
                 "---------",
@@ -3821,8 +5330,8 @@ class PlaygroundGUI:
                 "Jedes Hidden-Neuron benutzt eine Aktivierungsfunktion: relu, tanh, sigmoid oder leaky_relu.",
                 "Du kannst Aktivierungen fuer ganze Layer oder fuer einzelne Neuronen setzen.",
                 "",
-                "So arbeitest du damit",
-                "---------------------",
+                "So arbeitest du im Demo Mode",
+                "----------------------------",
                 "1. Waehl einen Benchmark.",
                 "2. Waehl Anzahl und Groesse der Hidden-Layer.",
                 "3. Schau dir im Input-Tab das aktuelle Sample an.",
@@ -3831,9 +5340,19 @@ class PlaygroundGUI:
                 "6. Vergleiche Vorhersage, Loss und Hidden-Aktivierungen vor und nach dem Training.",
                 "7. Klick auf ein Hidden-Neuron und lies seine lokale Rechnung.",
                 "",
+                "So arbeitest du im Playground Mode",
+                "----------------------------------",
+                "1. Waehle Benchmark, Hidden-Layer und ein Startlayout.",
+                "2. Lege eine Zielmetrik fest: Validation-Loss oder Validation-Accuracy.",
+                "3. Bestimme erlaubte Nachbarschaftsoperationen.",
+                "4. Setze Temperatur, Abkuehlregel, Kandidaten-Epochen und Stopplimits.",
+                "5. Bewerte den Startzustand.",
+                "6. Fuehre Simulated Annealing schrittweise oder komplett aus.",
+                "7. Vergleiche aktuellen Zustand, Kandidat und bestes Layout.",
+                "",
                 "Was die linke Seite macht",
                 "-------------------------",
-                "Die linke Seite ist die Steuerleiste. Hier stellst du Datensatz, Sample, Layout und Training ein.",
+                "Die linke Seite ist die Steuerleiste. Hier stellst du Datensatz, Sample, Layout und je nach Arbeitsmodus Training oder Annealing ein.",
                 "Im Einsteiger-Modus siehst du nur die wichtigsten Steuerungen.",
                 "Im Experten-Modus kommen Layer-Aenderungen, Neuron-Eingriffe und Vergleichswerkzeuge dazu.",
                 "",
@@ -3847,6 +5366,12 @@ class PlaygroundGUI:
                 "Training aendert Gewichte und Biases.",
                 "Es aendert nicht den Datensatz und nicht direkt das Aktivierungs-Layout.",
                 "Das sichtbare Sample ist nur ein Analysefenster.",
+                "",
+                "Was Simulated Annealing aendert",
+                "--------------------------------",
+                "Simulated Annealing optimiert nicht direkt die Gewichte, sondern das Aktivierungs-Layout.",
+                "Jedes Kandidaten-Layout wird kurz frisch trainiert und danach ueber Validation-Daten bewertet.",
+                "Ein besserer Kandidat wird direkt akzeptiert. Ein schlechterer kann bei hoher Temperatur trotzdem noch angenommen werden.",
                 "",
                 "Wofuer test_activation da ist",
                 "-----------------------------",
@@ -3862,6 +5387,11 @@ class PlaygroundGUI:
                 "--------------------------------------",
                 "Dieser Tab zerlegt ein einzelnes sichtbares Sample in die Hauptschritte des Forward- und Backward-Passes.",
                 "Damit wird sichtbar, was mathematisch im Netz passiert.",
+                "",
+                "Wofuer der Annealing-Tab da ist",
+                "-------------------------------",
+                "Dieser Tab ist im Playground Mode sichtbar.",
+                "Er zeigt den SA-Verlauf, aktuellen Zustand, Kandidaten, besten Zustand, Score-Entwicklung, Temperatur und Akzeptanzverhalten.",
                 "",
                 "Was spaeter darauf aufbauen kann",
                 "--------------------------------",
