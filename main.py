@@ -44,6 +44,7 @@ from configs import (
     ModelConfig,
     SUPPORTED_ACTIVATIONS,
     SUPPORTED_BENCHMARKS,
+    SUPPORTED_GUI_LANGUAGES,
     SUPPORTED_GUI_MODES,
     TrainingConfig,
     VisualizationConfig,
@@ -83,6 +84,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SUPPORTED_GUI_MODES,
         default="beginner",
         help="GUI-Modus: beginner reduziert Komplexitaet, expert zeigt alle Werkzeuge.",
+    )
+    parser.add_argument(
+        "--gui-language",
+        choices=SUPPORTED_GUI_LANGUAGES,
+        default="de",
+        help="Startsprache der GUI: de fuer Deutsch, en fuer Englisch.",
     )
     parser.add_argument(
         "--benchmark",
@@ -831,6 +838,7 @@ def _launch_gui(args: argparse.Namespace) -> None:
             weight_scale=args.weight_scale,
             random_state=args.seed,
             mode=args.gui_mode,
+            language=args.gui_language,
         )
         launch_playground_gui(gui_config)
     except ImportError as exc:

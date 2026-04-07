@@ -27,6 +27,7 @@ from pathlib import Path
 SUPPORTED_BENCHMARKS = ("breast_cancer", "wine", "digits", "test_activation")
 SUPPORTED_ACTIVATIONS = ("relu", "tanh", "sigmoid", "leaky_relu")
 SUPPORTED_GUI_MODES = ("beginner", "expert")
+SUPPORTED_GUI_LANGUAGES = ("de", "en")
 
 
 # Standardwerte fuer einen schnellen Einstieg.
