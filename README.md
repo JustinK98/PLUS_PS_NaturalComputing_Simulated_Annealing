@@ -1,10 +1,10 @@
 # Activation Playground
 
-Basisprojekt fuer das Proseminar **Natural Computing** an der **Paris Lodron Universitaet Salzburg**.
+Base project for the seminar **Natural Computing** at the **Paris Lodron University Salzburg**.
 
-Die Codebasis dient als kompakter Playground fuer kleine neuronale Netze mit frei belegbaren Aktivierungsfunktionen. Sie bildet die Grundlage fuer spaetere Erweiterungen wie Suche ueber Layouts und Simulated Annealing.
+This repository is a compact playground for small neural networks with editable activation layouts. It combines a didactic demo interface with a simulated annealing playground on top of the same benchmark, model, and visualization pipeline.
 
-## Schnellstart
+## Quick Start
 
 ```bash
 python -m venv .venv
@@ -15,80 +15,100 @@ export MPLCONFIGDIR=.mplconfig
 python main.py
 ```
 
-Das startet den interaktiven Assistenten im Terminal.
+This starts the interactive terminal assistant.
 
-Direkt in die GUI:
+Start the GUI directly:
 
 ```bash
 python main.py --gui
 ```
 
-Hilfe zur CLI:
+Start the GUI in simulated annealing mode:
+
+```bash
+python main.py --gui --gui-app-mode playground
+```
+
+Show CLI help:
 
 ```bash
 python main.py --help
 ```
 
-Hilfe zu Layout- und Neighbor-Syntax:
+Show layout and neighbor syntax help:
 
 ```bash
 python main.py --show-layout-help
 ```
 
-## Was mit der aktuellen Codebasis moeglich ist
+## Current Capabilities
 
-- kleine MLPs mit **1 bis 4 Hidden-Layern**
-- Aktivierungen pro Layer oder pro Neuron frei setzen
-- unterstuetzte Aktivierungen: `relu`, `tanh`, `sigmoid`, `leaky_relu`
-- Benchmarks: `breast_cancer`, `wine`, `digits`, `test_activation`
-- Training mit **Loss**, **Accuracy**, **Validation** und **Test**
-- Layouts als String definieren und veraendern
-- Neighbor-Operationen auf Layouts ausfuehren
-- Layout-Diffs sichtbar machen
-- ASCII-Ausgaben im Terminal
-- Matplotlib-Plots fuer Lernkurven und Layouts
-- GUI fuer interaktive Analyse von Netz, Datenfluss und Neuronen
+- small MLPs with **1 to 4 hidden layers**
+- activation functions assigned per layer or per individual neuron
+- supported activations: `relu`, `tanh`, `sigmoid`, `leaky_relu`
+- benchmarks: `breast_cancer`, `wine`, `digits`, `test_activation`
+- training with **train / validation / test**, **loss**, and **accuracy**
+- layout editing, local neighbor operations, and layout diffs
+- terminal ASCII views and Matplotlib plots
+- bilingual GUI in **German** and **English**
+- `Demo Mode` for understanding data flow, activations, training, and neuron behavior
+- `Playground Mode` for **Simulated Annealing** over activation layouts
 
-## Startmodi
+## GUI Workspaces
 
-### 1. Interaktiver Start
-
-```bash
-python main.py
-```
-
-Der Assistent fuehrt durch Benchmark, Hidden-Layer, Layout, Neighbor-Operationen, Training und optionale GUI-Nutzung.
-
-### 2. GUI
+### Demo Mode
 
 ```bash
-python main.py --gui
+python main.py --gui --gui-app-mode demo
 ```
 
-Expertenmodus:
+Demo Mode focuses on understanding one concrete network:
+
+- dataset and sample inspection
+- network visualization with neurons and connections
+- activation colors per hidden neuron
+- clickable neuron inspection with local computations
+- training plots
+- forward/backward stepper
+- baseline vs. current comparison
+
+### Playground Mode
 
 ```bash
-python main.py --gui --gui-mode expert
+python main.py --gui --gui-app-mode playground
 ```
 
-Die GUI zeigt:
+Playground Mode adds a real simulated annealing workflow:
 
-- das Netzwerk als Knoten- und Verbindungsansicht
-- Eingabedaten und Zielwerte
-- Aktivierungsfunktionen in Farben
-- frei aenderbare Hidden-Layer im Expertenmodus
-- Trainingsplots
-- Neuron-Inspektion per Klick
-- Forward/Backward-Stepper fuer ein einzelnes Sample
-- Vergleich von Baseline und aktuellem Experiment
+- activation layout as optimization state
+- configurable neighborhood operations
+- objective selection: `validation_loss` or `validation_accuracy`
+- cooling schedules: `geometric`, `linear`, `logarithmic`
+- visible current state, candidate, best state, and layout diffs
+- score, temperature, acceptance probability, and acceptance rate plots
+- didactic explanations for acceptance and rejection decisions
 
-### 3. Reproduzierbare CLI-Runs
+## CLI Examples
+
+Standard training run:
 
 ```bash
 python main.py --benchmark wine --hidden-sizes 16 8 --layout "relu|tanh" --epochs 120
 ```
 
-Mit Plot-Speicherung:
+Expert GUI:
+
+```bash
+python main.py --gui --gui-mode expert
+```
+
+English Playground Mode:
+
+```bash
+python main.py --gui --gui-app-mode playground --gui-language en --gui-mode expert
+```
+
+Save plots from a CLI run:
 
 ```bash
 python main.py --benchmark digits --layout "relu|relu" --epochs 40 --save-prefix demo/digits_run
@@ -98,32 +118,30 @@ python main.py --benchmark digits --layout "relu|relu" --epochs 40 --save-prefix
 
 ### `breast_cancer`
 
-- 30 numerische Eingaben
-- 2 Klassen
-- gut fuer kompakte binaere Klassifikation
+- 30 numerical input features
+- 2 classes
+- compact binary classification benchmark
 
 ### `wine`
 
-- 13 numerische Eingaben
-- 3 Klassen
-- gut fuer erste Layout-Vergleiche
+- 13 numerical input features
+- 3 classes
+- useful for comparing activation layouts in a small multiclass setting
 
 ### `digits`
 
-- 64 Eingaben
-- 10 Klassen
-- 8x8 Grauwertbilder von Ziffern
+- 64 inputs from 8x8 grayscale digit images
+- 10 classes
+- especially useful for visible input, target, and prediction flow
 
 ### `test_activation`
 
-- kuenstlicher Mini-Datensatz mit 3 Inputs
-- fuer rohe Vorwaertsrechnungen und Aktivierungsvergleiche
+- artificial mini benchmark with 3 inputs
+- intended for raw forward computations and activation comparisons
 
-## Layout-Syntax
+## Layout Syntax
 
-Ein Layout beschreibt die Aktivierungsfunktionen aller Hidden-Layer.
-
-Beispiele:
+A layout describes the activation functions of all hidden layers.
 
 ```text
 relu|relu
@@ -132,17 +150,15 @@ relu*16|tanh*8
 relu*5,tanh*5|sigmoid*4
 ```
 
-Bedeutung:
+Rules:
 
-- `|` trennt Hidden-Layer
-- `,` trennt Aktivierungen innerhalb eines Layers
-- `relu*16` steht fuer 16 Neuronen mit `relu`
+- `|` separates hidden layers
+- `,` separates activation groups inside one layer
+- `relu*16` means 16 neurons with `relu`
 
-## Neighbor-Operationen
+## Neighbor Syntax
 
-Neighbor-Operationen veraendern Layouts lokal. Das ist wichtig fuer spaetere Suchverfahren.
-
-Beispiele:
+Neighbor operations modify a layout locally.
 
 ```text
 set:L1:0:sigmoid
@@ -151,18 +167,24 @@ cycle:L1:3
 swap:L2:1:4
 ```
 
-## Projektstruktur
+These operations are used both for manual experiments and for the simulated annealing search space.
 
-- `main.py`: CLI, interaktiver Assistent, Programmstart
-- `benchmarks.py`: Datensaetze und Splits
-- `activations.py`: Aktivierungen, Layouts, Neighbor-Logik
-- `model.py`: MLP, Forward-Pass, Backpropagation, Inspektion
-- `trainer.py`: Trainingsschleife und Metriken
-- `plotting.py`: Matplotlib-Plots
-- `terminal_viz.py`: ASCII-Darstellungen im Terminal
-- `gui.py`: interaktive GUI
-- `configs.py`: zentrale Konfigurationen und Defaults
+## Project Structure
 
-## Aktueller Stand
+- `main.py`: CLI, interactive assistant, program entry point
+- `benchmarks.py`: dataset loading and splitting
+- `activations.py`: activation functions, layouts, neighbor logic
+- `model.py`: MLP, forward pass, backpropagation, neuron inspection
+- `trainer.py`: training loop and metrics
+- `plotting.py`: Matplotlib plots
+- `terminal_viz.py`: ASCII terminal views
+- `gui.py`: interactive GUI
+- `configs.py`: shared defaults and configuration
+- `annealing.py`: simulated annealing state and acceptance logic
+- `annealing_schedules.py`: cooling schedules
+- `annealing_objectives.py`: layout evaluation objectives
+- `annealing_runner.py`: simulated annealing execution and history
 
-Die aktuelle Version ist das erste Basisprojekt. Sie deckt Modell, Layouts, Neighbor-Logik, Training, Visualisierung und GUI bereits ab und ist so aufgebaut, dass spaeter Optimierungsverfahren auf Aktivierungs-Layouts direkt darauf aufsetzen koennen.
+## Current Scope
+
+This is the first base project of the repository. It already covers model building, layout editing, visualization, training, and simulated annealing over activation layouts, while keeping the codebase modular enough for further optimization methods later on.
