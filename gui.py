@@ -20,6 +20,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 import os
+from pathlib import Path
 from typing import Any, Sequence
 
 try:
@@ -81,6 +82,9 @@ from configs import (
     DEFAULT_ANNEALING_START_TEMPERATURE,
     DEFAULT_BATCH_SIZE,
     DEFAULT_EPOCHS,
+    DEFAULT_EXPERIMENT_OUTPUT_SUBDIR,
+    DEFAULT_EXPERIMENT_RANDOM_SEARCH_SAMPLES,
+    DEFAULT_EXPERIMENT_SEARCH_TYPE,
     DEFAULT_GUI_APP_MODE,
     DEFAULT_LAYOUT,
     DEFAULT_LEARNING_RATE,
@@ -89,6 +93,7 @@ from configs import (
     DatasetConfig,
     MAX_HIDDEN_LAYERS,
     MIN_HIDDEN_LAYERS,
+    OUTPUT_DIR,
     SUPPORTED_ACTIVATIONS,
     SUPPORTED_BENCHMARKS,
     SUPPORTED_GUI_APP_MODES,
@@ -98,7 +103,22 @@ from configs import (
     default_hidden_sizes,
     format_hidden_sizes,
 )
+from experiment_builder import (
+    PRIMARY_METRIC_LABELS,
+    SUGGESTED_TUNING_VALUES,
+    SUPPORTED_EXPERIMENT_RUN_MODES,
+    ExperimentDefinition,
+)
+from experiment_plots import build_experiment_overview_figure
+from experiment_runner import ExperimentRunner
 from model import ModularMLP, NeuronInspection, SampleTrace
+from results_store import load_experiment_results
+from search_spaces import (
+    SUPPORTED_SEARCH_TYPES,
+    SearchSpaceDefinition,
+    SearchValueDefinition,
+    expand_search_space,
+)
 from terminal_viz import render_layout, render_layout_diff
 from trainer import TrainingResult, train_model
 
@@ -124,12 +144,264 @@ MANUAL_DIGIT_VALUES = (0.0, 4.0, 8.0, 12.0, 16.0)
 
 LANGUAGE_LABELS = {"de": "Deutsch", "en": "English"}
 APP_MODE_LABELS = {
-    "de": {"demo": "Demo Mode", "playground": "Playground Mode"},
-    "en": {"demo": "Demo Mode", "playground": "Playground Mode"},
+    "de": {
+        "demo": "Demo Mode",
+        "playground": "Playground Mode",
+        "experiment_builder": "Experiment Builder",
+    },
+    "en": {
+        "demo": "Demo Mode",
+        "playground": "Playground Mode",
+        "experiment_builder": "Experiment Builder",
+    },
 }
 MODE_LABELS = {
     "de": {"beginner": "Einsteiger", "expert": "Experte"},
     "en": {"beginner": "Beginner", "expert": "Expert"},
+}
+RUN_MODE_LABELS = {
+    "de": {
+        "manual_training": "Manuelles Training",
+        "simulated_annealing": "Simulated Annealing",
+    },
+    "en": {
+        "manual_training": "Manual Training",
+        "simulated_annealing": "Simulated Annealing",
+    },
+}
+SEARCH_TYPE_LABELS = {
+    "de": {
+        "none": "Keine Suche",
+        "grid_search": "Grid Search",
+        "random_search": "Random Search",
+    },
+    "en": {
+        "none": "No Search",
+        "grid_search": "Grid Search",
+        "random_search": "Random Search",
+    },
+}
+SEED_STRATEGY_LABELS = {
+    "de": {
+        "count_range": "Anzahl + Start-Seed",
+        "explicit_list": "Explizite Seed-Liste",
+    },
+    "en": {
+        "count_range": "Count + Start Seed",
+        "explicit_list": "Explicit Seed List",
+    },
+}
+SEARCH_VALUE_KIND_LABELS = {
+    "de": {
+        "fixed": "Fest",
+        "list": "Liste",
+        "range": "Bereich",
+    },
+    "en": {
+        "fixed": "Fixed",
+        "list": "List",
+        "range": "Range",
+    },
+}
+
+EXPERIMENT_BUILDER_TEXTS = {
+    "de": {
+        "builder_mode_hint": (
+            "Der Experiment Builder ist fuer reproduzierbare Multi-Seed-Experimente, "
+            "Grid/Random Search, JSON-Ergebnisse und spaetere Wiederanalyse gedacht."
+        ),
+        "builder_setup_title": "1. Experiment Setup",
+        "builder_setup_hint": (
+            "Hier definierst du Benchmark, Hidden-Layer, Layout, Run-Modus und den Namen "
+            "des Experiments. Diese Basis gilt fuer alle spaeteren Runs."
+        ),
+        "builder_experiment_name": "Experiment-Name",
+        "builder_run_mode": "Run-Modus",
+        "builder_layout_choice": "Aktuelle Layouts",
+        "builder_layout_editor_title": "Layout-Editor",
+        "builder_layout_editor_hint": (
+            "Im Expertenmodus kannst du das Startlayout hier wie in Demo und Playground "
+            "pro Layer oder pro Neuron bearbeiten. Diese Einstellungen definieren das "
+            "Startlayout des naechsten Builder-Runs."
+        ),
+        "builder_primary_metric": "Primaere Metrik",
+        "builder_primary_metric_hint": "Ranking und Aggregation erfolgen standardmaessig ueber Validation, nicht ueber Test.",
+        "builder_seeds_title": "2. Seeds",
+        "builder_seeds_hint": (
+            "Mehrere Seeds zeigen, wie stabil eine Konfiguration wirklich ist. "
+            "Gleiche Konfiguration und gleicher Seed bleiben reproduzierbar."
+        ),
+        "builder_seed_strategy": "Seed-Strategie",
+        "builder_seed_count": "Anzahl Seeds",
+        "builder_seed_start": "Start-Seed",
+        "builder_seed_list": "Seed-Liste",
+        "builder_seed_preview": "Effektive Seeds",
+        "builder_training_title": "3. Training Setup",
+        "builder_training_hint": (
+            "Diese Hyperparameter gelten fuer normale Trainingslaeufe und fuer die "
+            "Kandidatenbewertung in SA."
+        ),
+        "builder_sa_title": "4. Simulated Annealing",
+        "builder_sa_hint": (
+            "Dieser Bereich wird nur fuer SA-Experimente verwendet. Er bestimmt Suchraum, "
+            "Bewertungsbudget und Annealing-Verlauf."
+        ),
+        "builder_tuning_title": "5. Hyperparameter-Tuning",
+        "builder_tuning_hint": (
+            "Aus einer Einzelkonfiguration wird hier ein diskreter Suchraum. Fest bedeutet "
+            "ein einzelner Wert, Liste mehrere explizite Werte, Bereich eine diskrete Range."
+        ),
+        "builder_search_type": "Search-Typ",
+        "builder_random_samples": "Random Samples",
+        "builder_storage_title": "6. Storage",
+        "builder_storage_hint": (
+            "Experimente koennen als JSON gespeichert und spaeter wieder geladen und "
+            "analysiert werden."
+        ),
+        "builder_output_dir": "Output-Ordner",
+        "builder_save_json": "JSON speichern",
+        "builder_load_path": "Pfad zu Manifest/Ordner",
+        "builder_run_title": "7. Run Control",
+        "builder_run_hint": (
+            "Validiere zuerst die Konfiguration. Danach kannst du das Experiment ausfuehren "
+            "oder gespeicherte Ergebnisse erneut laden."
+        ),
+        "builder_validate_button": "Experiment pruefen",
+        "builder_run_button": "Experiment starten",
+        "builder_load_results_button": "Ergebnisse laden",
+        "builder_summary_title": "Experiment Summary",
+        "builder_runs_tab": "Run List",
+        "builder_analysis_tab": "Multi-Seed Analysis",
+        "builder_detail_tab": "Per-Seed Detail",
+        "builder_plots_tab": "Plots",
+        "builder_overview_tab": "Summary",
+        "builder_help_tab": "Builder Help",
+        "builder_run_tree_hint": "Alle ausgefuehrten Runs. Auswahl aktualisiert Detailansicht und Plot-Fokus.",
+        "builder_analysis_hint": "Aggregation ueber Seeds und Konfigurationen, mit Fokus auf Validation-Metriken.",
+        "builder_detail_hint": "Detaillierte Sicht auf einen einzelnen Run inklusive History und SA-Zusatzdaten.",
+        "builder_plot_hint": "Plots werden direkt aus den gespeicherten Resultaten rekonstruiert.",
+        "builder_no_results": "Noch keine Builder-Ergebnisse verfuegbar.",
+        "builder_status_idle": "Noch kein Experiment ausgefuehrt oder geladen.",
+        "builder_validation_ok": "Konfiguration ist gueltig. Ausgefuehrte Runs: {run_count}.",
+        "builder_validation_error_title": "Builder-Konfiguration ungueltig",
+        "builder_run_error_title": "Experiment Builder Fehler",
+        "builder_load_error_title": "Ergebnisse konnten nicht geladen werden",
+    },
+    "en": {
+        "builder_mode_hint": (
+            "The Experiment Builder is meant for reproducible multi-seed experiments, "
+            "grid/random search, JSON result storage, and later re-analysis."
+        ),
+        "builder_setup_title": "1. Experiment Setup",
+        "builder_setup_hint": (
+            "Define benchmark, hidden layers, layout, run mode, and experiment name here. "
+            "This base configuration applies to all later runs."
+        ),
+        "builder_experiment_name": "Experiment Name",
+        "builder_run_mode": "Run Mode",
+        "builder_layout_choice": "Current Layouts",
+        "builder_layout_editor_title": "Layout Editor",
+        "builder_layout_editor_hint": (
+            "In expert mode you can edit the builder start layout here just like in Demo "
+            "and Playground, per layer or per neuron. These settings define the start "
+            "layout for the next builder run."
+        ),
+        "builder_primary_metric": "Primary Metric",
+        "builder_primary_metric_hint": "Ranking and aggregation use validation by default, not test metrics.",
+        "builder_seeds_title": "2. Seeds",
+        "builder_seeds_hint": (
+            "Multiple seeds show how stable a configuration really is. "
+            "Same configuration and same seed remain reproducible."
+        ),
+        "builder_seed_strategy": "Seed Strategy",
+        "builder_seed_count": "Seed Count",
+        "builder_seed_start": "Start Seed",
+        "builder_seed_list": "Seed List",
+        "builder_seed_preview": "Effective Seeds",
+        "builder_training_title": "3. Training Setup",
+        "builder_training_hint": (
+            "These hyperparameters apply to normal training runs and to candidate evaluation in SA."
+        ),
+        "builder_sa_title": "4. Simulated Annealing",
+        "builder_sa_hint": (
+            "This section is only used for SA experiments. It controls search space, "
+            "evaluation budget, and annealing behavior."
+        ),
+        "builder_tuning_title": "5. Hyperparameter Tuning",
+        "builder_tuning_hint": (
+            "This turns one configuration into a discrete search space. Fixed means one value, "
+            "list means explicit values, range means a discrete numeric range."
+        ),
+        "builder_search_type": "Search Type",
+        "builder_random_samples": "Random Samples",
+        "builder_storage_title": "6. Storage",
+        "builder_storage_hint": (
+            "Experiments can be stored as JSON and later loaded and analyzed again."
+        ),
+        "builder_output_dir": "Output Directory",
+        "builder_save_json": "Save JSON",
+        "builder_load_path": "Path to Manifest/Directory",
+        "builder_run_title": "7. Run Control",
+        "builder_run_hint": (
+            "Validate the configuration first. After that you can execute the experiment "
+            "or reload stored results."
+        ),
+        "builder_validate_button": "Validate Experiment",
+        "builder_run_button": "Run Experiment",
+        "builder_load_results_button": "Load Results",
+        "builder_summary_title": "Experiment Summary",
+        "builder_runs_tab": "Run List",
+        "builder_analysis_tab": "Multi-Seed Analysis",
+        "builder_detail_tab": "Per-Seed Detail",
+        "builder_plots_tab": "Plots",
+        "builder_overview_tab": "Summary",
+        "builder_help_tab": "Builder Help",
+        "builder_run_tree_hint": "All executed runs. Selection updates detail view and plot focus.",
+        "builder_analysis_hint": "Aggregation across seeds and configurations, focused on validation metrics.",
+        "builder_detail_hint": "Detailed view of one run including history and SA extras.",
+        "builder_plot_hint": "Plots are reconstructed directly from stored results.",
+        "builder_no_results": "No builder results available yet.",
+        "builder_status_idle": "No experiment executed or loaded yet.",
+        "builder_validation_ok": "Configuration is valid. Scheduled runs: {run_count}.",
+        "builder_validation_error_title": "Invalid builder configuration",
+        "builder_run_error_title": "Experiment builder error",
+        "builder_load_error_title": "Could not load results",
+    },
+}
+
+EXPERIMENT_BUILDER_INFO_TEXTS = {
+    "de": {
+        "builder_setup": "Ein Experiment kombiniert Benchmark, Architektur, Layout, Seeds und Run-Modus zu einer reproduzierbaren Definition.",
+        "builder_seeds": "Mehrere Seeds helfen, Zufallseffekte sichtbar zu machen. Fuer faire Vergleiche sollten Konfigurationen mit denselben Seeds bewertet werden.",
+        "builder_training": "Diese Trainingsparameter steuern normale Runs und auch die Kandidatenbewertung innerhalb von Simulated Annealing.",
+        "builder_sa": "Im SA-Modus wird ein Aktivierungs-Layout optimiert. Jeder Kandidat wird kurz trainiert und ueber Validation bewertet.",
+        "builder_search": "Grid Search testet alle diskreten Kombinationen. Random Search sampelt reproduzierbar eine Teilmenge dieses diskreten Suchraums.",
+        "builder_storage": "Ein Experiment wird als Manifest, Summary und einzelne Run-Dateien gespeichert. So lassen sich Ergebnisse spaeter wieder laden.",
+        "builder_run_control": "Validation prueft nur die Builder-Konfiguration. Der eigentliche Lauf fuehrt danach alle Seeds und Konfigurationen aus.",
+        "builder_primary_metric": "Die primaere Metrik steuert Ranking und Best/Worst-Bewertung. Fuer die Auswahl wird Validation genutzt, nicht Test.",
+        "builder_seed_strategy": "Du kannst entweder eine explizite Seed-Liste eingeben oder aus Startwert und Anzahl eine Liste erzeugen.",
+        "builder_layout_choice": "Diese Liste sammelt das aktuell eingestellte Setup-Layout und rekonstruierbare Layouts aus dem selektierten Builder-Run. Die Auswahl aktualisiert rechts die Netzvorschau.",
+        "builder_layout_editor": "Der Layout-Editor bearbeitet das Startlayout fuer den naechsten Builder-Run. Im Expertenmodus kannst du ganze Layer oder einzelne Neuronen direkt belegen. Die rechte Vorschau zeigt das konfigurierte Startlayout nur dann direkt, wenn in 'Aktuelle Layouts' das Setup-Layout aktiv ist.",
+        "builder_search_value": "Fest = ein Wert. Liste = mehrere explizite Kandidaten. Bereich = diskrete Werte von start bis stop mit festem Schritt.",
+        "builder_output_dir": "Unter diesem Ordner werden Manifest, Summary und einzelne Run-Dateien abgelegt.",
+        "builder_load_path": "Du kannst direkt einen Experimentordner oder die manifest.json eines gespeicherten Experiments laden.",
+    },
+    "en": {
+        "builder_setup": "An experiment combines benchmark, architecture, layout, seeds, and run mode into one reproducible definition.",
+        "builder_seeds": "Multiple seeds make random effects visible. For fair comparisons, configurations should be evaluated with the same seeds.",
+        "builder_training": "These training parameters control normal runs and also candidate evaluation inside simulated annealing.",
+        "builder_sa": "In SA mode an activation layout is optimized. Every candidate is trained briefly and scored on validation.",
+        "builder_search": "Grid search tests all discrete combinations. Random search reproducibly samples a subset of the same discrete search space.",
+        "builder_storage": "An experiment is stored as a manifest, summary, and individual run files. This makes later re-loading possible.",
+        "builder_run_control": "Validation only checks the builder configuration. The actual run then executes all seeds and configurations.",
+        "builder_primary_metric": "The primary metric controls ranking and best/worst selection. Validation is used for selection, not test.",
+        "builder_seed_strategy": "You can either enter an explicit seed list or generate one from a start seed and a count.",
+        "builder_layout_choice": "This list collects the current setup layout and reconstructable layouts from the selected builder run. Choosing one updates the network preview on the right.",
+        "builder_layout_editor": "The layout editor changes the start layout for the next builder run. In expert mode you can assign activations to full layers or to individual neurons. The network preview on the right only follows this configuration directly while 'Current Layouts' is set to the setup layout.",
+        "builder_search_value": "Fixed = one value. List = explicit candidate values. Range = discrete values from start to stop with a fixed step.",
+        "builder_output_dir": "Manifest, summary, and run JSON files are written below this directory.",
+        "builder_load_path": "You can load either an experiment directory directly or the manifest.json of a stored experiment.",
+    },
 }
 
 GUI_TEXTS = {
@@ -141,7 +413,8 @@ GUI_TEXTS = {
         "app_mode_label": "Arbeitsmodus",
         "mode_hint": (
             "Waehle zuerst den Arbeitsmodus: Demo Mode fuer Verstehen und Training, Playground Mode "
-            "fuer Simulated Annealing. Die Detailstufe bestimmt danach, wie viele Werkzeuge sichtbar sind."
+            "fuer einzelne SA-Laeufe und Experiment Builder fuer reproduzierbare Multi-Seed- und Such-Experimente. "
+            "Die Detailstufe bestimmt danach, wie viele Werkzeuge sichtbar sind."
         ),
         "mode_label": "Detailstufe",
         "language_label": "Sprache",
@@ -320,7 +593,7 @@ GUI_TEXTS = {
         ),
         "guide_link_text": (
             "Die ausfuehrliche Anleitung erklaert Demo Mode, Playground Mode, "
-            "Simulated Annealing, typische Arbeitsweisen und die wichtigsten Begriffe."
+            "Experiment Builder, Simulated Annealing, typische Arbeitsweisen und die wichtigsten Begriffe."
         ),
         "target_auto_label": "(echtes Ziel)",
         "target_none_label": "(kein Ziel)",
@@ -341,7 +614,8 @@ GUI_TEXTS = {
         "app_mode_label": "Workspace",
         "mode_hint": (
             "Choose the workspace first: Demo Mode for understanding and training, Playground Mode "
-            "for simulated annealing. The detail level then controls how many tools stay visible."
+            "for single simulated-annealing runs, and Experiment Builder for reproducible multi-seed and search experiments. "
+            "The detail level then controls how many tools stay visible."
         ),
         "mode_label": "Detail Level",
         "language_label": "Language",
@@ -519,7 +793,7 @@ GUI_TEXTS = {
             "space for reading and scrolling."
         ),
         "guide_link_text": (
-            "The detailed guide explains Demo Mode, Playground Mode, simulated annealing, "
+            "The detailed guide explains Demo Mode, Playground Mode, Experiment Builder, simulated annealing, "
             "common workflows, and the main concepts of the program."
         ),
         "target_auto_label": "(true target)",
@@ -537,7 +811,7 @@ GUI_TEXTS = {
 
 INFO_TEXTS = {
     "de": {
-        "app_mode": "Der Arbeitsmodus trennt zwei Ziele: Demo Mode zum Verstehen und Beobachten, Playground Mode zum Erkunden eines echten Optimierungsverfahrens mit Simulated Annealing.",
+        "app_mode": "Der Arbeitsmodus trennt drei Ziele: Demo Mode zum Verstehen und Beobachten, Playground Mode fuer einen einzelnen SA-Lauf und Experiment Builder fuer reproduzierbare Multi-Seed- und Search-Experimente.",
         "mode": "Der Modus steuert, wie viel Komplexitaet sichtbar ist. Einsteiger konzentriert sich auf die wichtigsten Schritte, Experte zeigt tiefe Eingriffe und Vergleichswerkzeuge.",
         "language": "Hier schaltest du die komplette GUI zwischen Deutsch und Englisch um. Die Ansichten, Hinweise, Hilfe-Texte und Dialoge werden dabei gemeinsam aktualisiert.",
         "workflow": "Der Lernfluss zeigt die empfohlene Reihenfolge fuer eine Sitzung. Ueber die Anleitung bekommst du eine einfache Gesamterklaerung des Programms von Anfang bis Ende.",
@@ -637,7 +911,7 @@ INFO_TEXTS = {
         ),
     },
     "en": {
-        "app_mode": "The workspace mode separates two goals: Demo Mode for understanding and observing, Playground Mode for exploring a real optimization procedure with simulated annealing.",
+        "app_mode": "The workspace mode separates three goals: Demo Mode for understanding and observing, Playground Mode for one SA run, and Experiment Builder for reproducible multi-seed and search experiments.",
         "mode": "The mode controls how much complexity is visible. Beginner focuses on the essential steps, while Expert exposes deeper interventions and comparison tools.",
         "language": "Switch the complete GUI between German and English here. Views, hints, help texts, and dialogs are updated together.",
         "workflow": "The learning flow shows the recommended order for using the tool. The guide opens a simple explanation of the whole program from start to finish.",
@@ -844,10 +1118,13 @@ class PlaygroundGUI:
         self.step_entries: list[tuple[str, str]] = []
         self.layer_size_controls_frame: ttk.Frame | None = None
         self.layer_fill_controls_frame: ttk.Frame | None = None
+        self.builder_layer_fill_controls_frame: ttk.Frame | None = None
         self.hidden_size_spinboxes: list[ttk.Spinbox] = []
         self.hidden_layer_size_labels: list[ttk.Label] = []
         self.layer_fill_combos: list[ttk.Combobox] = []
+        self.builder_layer_fill_combos: list[ttk.Combobox] = []
         self.expert_only_widgets: list[Any] = []
+        self.builder_expert_only_widgets: list[Any] = []
         self.step_index_var = tk.IntVar(value=0)
         self.guide_window: tk.Toplevel | None = None
         self.controls_canvas: tk.Canvas | None = None
@@ -897,6 +1174,8 @@ class PlaygroundGUI:
         self.layer_summary_var = tk.StringVar(value="")
         self.playground_summary_var = tk.StringVar(value="")
         self.playground_decision_var = tk.StringVar(value="")
+        self.builder_status_var = tk.StringVar(value=self.t("builder_status_idle"))
+        self.builder_summary_var = tk.StringVar(value="")
 
         self.test_input_vars = [tk.DoubleVar(value=0.0) for _ in range(3)]
         self.objective_var = tk.StringVar(value=DEFAULT_ANNEALING_OBJECTIVE)
@@ -913,6 +1192,33 @@ class PlaygroundGUI:
             for operation in ("set_neuron", "fill_layer", "swap_neurons")
         }
 
+        default_builder_output = str(OUTPUT_DIR / DEFAULT_EXPERIMENT_OUTPUT_SUBDIR)
+        self.builder_experiment_name_var = tk.StringVar(
+            value=f"{config.benchmark}_{config.app_mode}"
+        )
+        self.builder_run_mode_var = tk.StringVar(value="manual_training")
+        self.builder_run_mode_display_var = tk.StringVar(value="")
+        self.builder_primary_metric_var = tk.StringVar(value="validation_accuracy")
+        self.builder_seed_strategy_var = tk.StringVar(value="count_range")
+        self.builder_seed_strategy_display_var = tk.StringVar(value="")
+        self.builder_seed_count_var = tk.IntVar(value=5)
+        self.builder_seed_start_var = tk.IntVar(value=config.random_state)
+        self.builder_seed_list_var = tk.StringVar(value="42, 43, 44")
+        self.builder_seed_preview_var = tk.StringVar(value="")
+        self.builder_search_type_var = tk.StringVar(value=DEFAULT_EXPERIMENT_SEARCH_TYPE)
+        self.builder_search_type_display_var = tk.StringVar(value="")
+        self.builder_random_samples_var = tk.IntVar(value=DEFAULT_EXPERIMENT_RANDOM_SEARCH_SAMPLES)
+        self.builder_random_seed_var = tk.IntVar(value=config.random_state)
+        self.builder_layout_choice_var = tk.StringVar(value="")
+        self.builder_output_dir_var = tk.StringVar(value=default_builder_output)
+        self.builder_save_json_var = tk.BooleanVar(value=True)
+        self.builder_load_path_var = tk.StringVar(value="")
+
+        self.builder_tuning_mode_vars: dict[str, tk.StringVar] = {}
+        self.builder_tuning_mode_display_vars: dict[str, tk.StringVar] = {}
+        self.builder_tuning_value_vars: dict[str, tk.StringVar] = {}
+        self.builder_tuning_rows: dict[str, ttk.Frame] = {}
+
         self.annealing_runner: AnnealingRunner | None = None
         self.annealing_state: AnnealingState | None = None
         self.annealing_last_step: AnnealingStep | None = None
@@ -922,6 +1228,43 @@ class PlaygroundGUI:
         self.annealing_figure: Figure | None = None
         self.annealing_axes: list[Any] = []
         self.annealing_canvas_widget: FigureCanvasTkAgg | None = None
+
+        self.builder_runner = ExperimentRunner()
+        self.builder_last_execution: dict[str, Any] | None = None
+        self.builder_loaded_payload: dict[str, Any] | None = None
+        self.builder_selected_run_id: str | None = None
+        self.builder_selected_config_id: str | None = None
+        self.builder_run_tree: ttk.Treeview | None = None
+        self.builder_summary_text: ScrolledText | None = None
+        self.builder_analysis_text: ScrolledText | None = None
+        self.builder_detail_text: ScrolledText | None = None
+        self.builder_help_text: ScrolledText | None = None
+        self.builder_plot_container: ttk.Frame | None = None
+        self.builder_plot_canvas_widget: FigureCanvasTkAgg | None = None
+        self.builder_plot_figure: Figure | None = None
+        self.builder_run_mode_sections: list[ttk.LabelFrame] = []
+        self.builder_layout_options: dict[str, dict[str, Any]] = {}
+        self.builder_layout_row: ttk.Frame | None = None
+        self.builder_layout_combo: ttk.Combobox | None = None
+        self.builder_layout_entry: ttk.Entry | None = None
+        self.builder_layout_editor_frame: ttk.LabelFrame | None = None
+        self.builder_neuron_layer_label: ttk.Frame | None = None
+        self.builder_neuron_layer_combo: ttk.Combobox | None = None
+        self.builder_neuron_index_label: ttk.Frame | None = None
+        self.builder_neuron_index_combo: ttk.Combobox | None = None
+        self.builder_neuron_activation_label: ttk.Frame | None = None
+        self.builder_neuron_activation_combo: ttk.Combobox | None = None
+        self.builder_neuron_button_row: ttk.Frame | None = None
+        self.builder_config_layout: ActivationLayout | None = None
+        self.builder_setup_frame: ttk.LabelFrame | None = None
+        self.builder_seeds_frame: ttk.LabelFrame | None = None
+        self.builder_training_frame: ttk.LabelFrame | None = None
+        self.builder_sa_frame: ttk.LabelFrame | None = None
+        self.builder_tuning_frame: ttk.LabelFrame | None = None
+        self.builder_storage_frame: ttk.LabelFrame | None = None
+        self.builder_run_frame: ttk.LabelFrame | None = None
+
+        self._initialize_builder_tuning_vars(config)
 
         self._configure_styles()
         self._build_layout()
@@ -952,14 +1295,25 @@ class PlaygroundGUI:
         """Liefert einen GUI-Text in der aktuellen Sprache."""
 
         language = self._language()
-        template = GUI_TEXTS.get(language, GUI_TEXTS["de"]).get(key, GUI_TEXTS["de"].get(key, key))
+        template = GUI_TEXTS.get(language, GUI_TEXTS["de"]).get(key)
+        if template is None:
+            template = EXPERIMENT_BUILDER_TEXTS.get(language, EXPERIMENT_BUILDER_TEXTS["de"]).get(
+                key,
+                EXPERIMENT_BUILDER_TEXTS["de"].get(key, key),
+            )
         return template.format(**kwargs)
 
     def info_text(self, key: str) -> str:
         """Liefert den Inhalt eines Info-Dialogs in der aktuellen Sprache."""
 
         language = self._language()
-        return INFO_TEXTS.get(language, INFO_TEXTS["de"]).get(key, INFO_TEXTS["de"].get(key, key))
+        template = INFO_TEXTS.get(language, INFO_TEXTS["de"]).get(key)
+        if template is None:
+            template = EXPERIMENT_BUILDER_INFO_TEXTS.get(
+                language,
+                EXPERIMENT_BUILDER_INFO_TEXTS["de"],
+            ).get(key, EXPERIMENT_BUILDER_INFO_TEXTS["de"].get(key, key))
+        return template
 
     def _app_mode(self) -> str:
         """Liefert den aktuellen Arbeitsmodus."""
@@ -987,6 +1341,102 @@ class PlaygroundGUI:
         """Synchronisiert das sichtbare App-Mode-Label mit dem internen Wert."""
 
         self.app_mode_display_var.set(self._app_mode_label(self._app_mode()))
+
+    def _run_mode_label(self, mode_value: str) -> str:
+        """Uebersetzt interne Builder-Run-Modi in sichtbare Labels."""
+
+        return RUN_MODE_LABELS.get(self._language(), RUN_MODE_LABELS["de"]).get(mode_value, mode_value)
+
+    def _run_mode_from_label(self, mode_label: str) -> str:
+        """Wandelt ein sichtbares Builder-Run-Mode-Label in den internen Wert um."""
+
+        for mode_value in SUPPORTED_EXPERIMENT_RUN_MODES:
+            if self._run_mode_label(mode_value) == mode_label:
+                return mode_value
+        return "manual_training"
+
+    def _sync_builder_run_mode_display_var(self) -> None:
+        """Synchronisiert das sichtbare Builder-Run-Mode-Label."""
+
+        self.builder_run_mode_display_var.set(self._run_mode_label(self.builder_run_mode_var.get()))
+
+    def _search_type_label(self, search_type: str) -> str:
+        """Uebersetzt Builder-Search-Typen."""
+
+        return SEARCH_TYPE_LABELS.get(self._language(), SEARCH_TYPE_LABELS["de"]).get(search_type, search_type)
+
+    def _search_type_from_label(self, label: str) -> str:
+        """Wandelt ein sichtbares Search-Label in den internen Wert um."""
+
+        for search_type in SUPPORTED_SEARCH_TYPES:
+            if self._search_type_label(search_type) == label:
+                return search_type
+        return DEFAULT_EXPERIMENT_SEARCH_TYPE
+
+    def _sync_builder_search_type_display_var(self) -> None:
+        """Synchronisiert das sichtbare Search-Type-Label."""
+
+        self.builder_search_type_display_var.set(
+            self._search_type_label(self.builder_search_type_var.get())
+        )
+
+    def _seed_strategy_label(self, strategy: str) -> str:
+        """Uebersetzt die Builder-Seed-Strategie."""
+
+        return SEED_STRATEGY_LABELS.get(self._language(), SEED_STRATEGY_LABELS["de"]).get(strategy, strategy)
+
+    def _seed_strategy_from_label(self, label: str) -> str:
+        """Wandelt ein sichtbares Seed-Strategie-Label in den internen Wert um."""
+
+        for strategy in SEED_STRATEGY_LABELS["de"]:
+            if self._seed_strategy_label(strategy) == label:
+                return strategy
+        return "count_range"
+
+    def _sync_builder_seed_strategy_display_var(self) -> None:
+        """Synchronisiert das sichtbare Seed-Strategie-Label."""
+
+        self.builder_seed_strategy_display_var.set(
+            self._seed_strategy_label(self.builder_seed_strategy_var.get())
+        )
+
+    def _search_value_kind_label(self, kind: str) -> str:
+        """Uebersetzt Fixed/List/Range fuer Builder-Tuningfelder."""
+
+        return SEARCH_VALUE_KIND_LABELS.get(self._language(), SEARCH_VALUE_KIND_LABELS["de"]).get(kind, kind)
+
+    def _search_value_kind_from_label(self, label: str) -> str:
+        """Wandelt ein sichtbares Search-Value-Kind in den internen Wert um."""
+
+        for kind in SEARCH_VALUE_KIND_LABELS["de"]:
+            if self._search_value_kind_label(kind) == label:
+                return kind
+        return "fixed"
+
+    def _initialize_builder_tuning_vars(self, config: GuiExperimentConfig) -> None:
+        """Initialisiert die GUI-Variablen fuer diskrete Suchraeume."""
+
+        base_values = {
+            "learning_rate": str(config.learning_rate),
+            "batch_size": str(config.batch_size),
+            "weight_scale": str(config.weight_scale),
+            "epochs": str(config.epochs),
+            "candidate_epochs": str(DEFAULT_ANNEALING_CANDIDATE_EPOCHS),
+            "start_temperature": str(DEFAULT_ANNEALING_START_TEMPERATURE),
+            "cooling_schedule": DEFAULT_ANNEALING_COOLING_SCHEDULE,
+            "cooling_parameter": str(DEFAULT_ANNEALING_COOLING_PARAMETER),
+        }
+        for parameter_name, value_text in base_values.items():
+            self.builder_tuning_mode_vars[parameter_name] = tk.StringVar(value="fixed")
+            self.builder_tuning_mode_display_vars[parameter_name] = tk.StringVar(value="")
+            self.builder_tuning_value_vars[parameter_name] = tk.StringVar(value=value_text)
+        self._sync_builder_run_mode_display_var()
+        self._sync_builder_search_type_display_var()
+        self._sync_builder_seed_strategy_display_var()
+        for parameter_name in self.builder_tuning_mode_display_vars:
+            self.builder_tuning_mode_display_vars[parameter_name].set(
+                self._search_value_kind_label(self.builder_tuning_mode_vars[parameter_name].get())
+            )
 
     def _mode_label(self, mode_value: str) -> str:
         """Uebersetzt interne Moduswerte in sichtbare GUI-Labels."""
@@ -1197,6 +1647,16 @@ class PlaygroundGUI:
 
         messagebox.showinfo(self.t("info_dialog_title"), self.info_text(info_key))
 
+    def _widget_exists(self, widget: Any | None) -> bool:
+        """Prueft robust, ob ein Tk-Widget noch existiert."""
+
+        if widget is None:
+            return False
+        try:
+            return bool(widget.winfo_exists())
+        except tk.TclError:
+            return False
+
     def _create_info_button(self, parent: tk.Widget, info_key: str) -> ttk.Button:
         """Erzeugt einen kleinen 'i'-Button fuer Zusatzinfos."""
 
@@ -1265,7 +1725,7 @@ class PlaygroundGUI:
         self._on_mode_changed()
 
     def _on_app_mode_selected(self, _event=None) -> None:
-        """Schaltet zwischen Demo Mode und Playground Mode um."""
+        """Schaltet zwischen den grossen GUI-Arbeitsmodi um."""
 
         selected_app_mode = self._app_mode_from_label(self.app_mode_display_var.get())
         if selected_app_mode == self._app_mode():
@@ -1311,8 +1771,11 @@ class PlaygroundGUI:
         self.hidden_size_spinboxes = []
         self.hidden_layer_size_labels = []
         self.layer_fill_combos = []
+        self.builder_layer_fill_combos = []
         self.layer_size_controls_frame = None
         self.layer_fill_controls_frame = None
+        self.builder_layer_fill_controls_frame = None
+        self.builder_expert_only_widgets = []
         self.node_tags = {}
         self.controls_canvas = None
         self.controls_inner = None
@@ -1325,6 +1788,35 @@ class PlaygroundGUI:
         self.annealing_figure = None
         self.annealing_axes = []
         self.annealing_canvas_widget = None
+        self.builder_run_tree = None
+        self.builder_summary_text = None
+        self.builder_analysis_text = None
+        self.builder_detail_text = None
+        self.builder_help_text = None
+        self.builder_layout_entry = None
+        self.builder_layout_editor_frame = None
+        self.builder_neuron_layer_label = None
+        self.builder_neuron_layer_combo = None
+        self.builder_neuron_index_label = None
+        self.builder_neuron_index_combo = None
+        self.builder_neuron_activation_label = None
+        self.builder_neuron_activation_combo = None
+        self.builder_neuron_button_row = None
+        self.builder_plot_container = None
+        self.builder_plot_canvas_widget = None
+        self.builder_plot_figure = None
+        self.builder_run_mode_sections = []
+        self.builder_tuning_rows = {}
+        self.builder_layout_row = None
+        self.builder_layout_combo = None
+        self.builder_layout_options = {}
+        self.builder_setup_frame = None
+        self.builder_seeds_frame = None
+        self.builder_training_frame = None
+        self.builder_sa_frame = None
+        self.builder_tuning_frame = None
+        self.builder_storage_frame = None
+        self.builder_run_frame = None
 
         for child in self.root.winfo_children():
             child.destroy()
@@ -1333,6 +1825,13 @@ class PlaygroundGUI:
         self._sync_app_mode_display_var()
         self._sync_mode_display_var()
         self._sync_language_display_var()
+        self._sync_builder_run_mode_display_var()
+        self._sync_builder_search_type_display_var()
+        self._sync_builder_seed_strategy_display_var()
+        for parameter_name in self.builder_tuning_mode_display_vars:
+            self.builder_tuning_mode_display_vars[parameter_name].set(
+                self._search_value_kind_label(self.builder_tuning_mode_vars[parameter_name].get())
+            )
         self._update_target_options()
         self._set_analysis_target_from_token(self._analysis_target_token())
         self._apply_mode_visibility()
@@ -1350,6 +1849,9 @@ class PlaygroundGUI:
         self._sync_app_mode_display_var()
         self._sync_mode_display_var()
         self._sync_language_display_var()
+        self._sync_builder_run_mode_display_var()
+        self._sync_builder_search_type_display_var()
+        self._sync_builder_seed_strategy_display_var()
 
         mode_frame = ttk.LabelFrame(parent, text=self.t("mode_frame_title"), padding=10)
         mode_frame.pack(fill=tk.X, pady=(0, 10))
@@ -1444,6 +1946,10 @@ class PlaygroundGUI:
             style="Hint.TLabel",
             wraplength=330,
         ).pack(anchor="w", pady=(8, 0))
+
+        if self._app_mode() == "experiment_builder":
+            self._build_experiment_builder_controls(parent)
+            return
 
         preset_frame = ttk.LabelFrame(parent, text=self.t("preset_frame_title"), padding=10)
         preset_frame.pack(fill=tk.X, pady=(0, 10))
@@ -2022,21 +2528,16 @@ class PlaygroundGUI:
                 wraplength=330,
             ).pack(anchor="w", pady=(10, 0))
 
-    def _build_content(self, parent: ttk.Frame) -> None:
-        """Rechter Bereich mit Netzwerk, Input-Ansicht, Plotting und Lernhilfe."""
-
-        summary_frame = ttk.LabelFrame(parent, text=self.t("summary_frame_title"), padding=10)
-        summary_frame.grid(row=0, column=0, sticky="ew")
-        ttk.Label(
-            summary_frame,
-            textvariable=self.network_summary_var,
-            justify=tk.LEFT,
-            style="SectionValue.TLabel",
-            wraplength=1040,
-        ).pack(anchor="w")
+    def _build_network_preview_frame(
+        self,
+        parent: ttk.Frame,
+        row: int,
+        pady: tuple[int, int] = (10, 10),
+    ) -> None:
+        """Baut die gemeinsame Netzvorschau fuer Demo, Playground und Builder."""
 
         self.canvas_frame = ttk.LabelFrame(parent, text=self.t("canvas_frame_title"), padding=8)
-        self.canvas_frame.grid(row=1, column=0, sticky="nsew", pady=(10, 10))
+        self.canvas_frame.grid(row=row, column=0, sticky="nsew", pady=pady)
         self.canvas_frame.columnconfigure(0, weight=5)
         self.canvas_frame.columnconfigure(1, weight=3)
         self.canvas_frame.rowconfigure(0, weight=0)
@@ -2098,6 +2599,1176 @@ class PlaygroundGUI:
         self.activation_canvas.get_tk_widget().grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
         self._update_canvas_layout()
+
+    def _build_experiment_builder_controls(self, parent: ttk.Frame) -> None:
+        """Baut die linke Steuerleiste fuer den Experiment Builder."""
+
+        self.builder_setup_frame = ttk.LabelFrame(parent, text=self.t("builder_setup_title"), padding=10)
+        self.builder_setup_frame.pack(fill=tk.X, pady=(0, 10))
+        self.builder_setup_frame.columnconfigure(1, weight=1)
+        setup_hint_row = ttk.Frame(self.builder_setup_frame, style="White.TFrame")
+        setup_hint_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(
+            setup_hint_row,
+            text=self.t("builder_setup_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(setup_hint_row, "builder_setup").pack(side=tk.RIGHT)
+
+        self._grid_label_with_info(
+            self.builder_setup_frame,
+            1,
+            self.t("builder_experiment_name"),
+            "builder_setup",
+            pady=(10, 0),
+        )
+        ttk.Entry(self.builder_setup_frame, textvariable=self.builder_experiment_name_var).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(10, 0),
+        )
+
+        self._grid_label_with_info(self.builder_setup_frame, 2, self.t("benchmark_label"), "benchmark")
+        benchmark_combo = ttk.Combobox(
+            self.builder_setup_frame,
+            textvariable=self.benchmark_var,
+            values=SUPPORTED_BENCHMARKS,
+            state="readonly",
+            width=18,
+        )
+        benchmark_combo.grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        benchmark_combo.bind("<<ComboboxSelected>>", self._on_benchmark_changed)
+
+        self._grid_label_with_info(
+            self.builder_setup_frame,
+            3,
+            self.t("hidden_layers_label"),
+            "hidden_layers",
+        )
+        self.layer_size_controls_frame = ttk.Frame(self.builder_setup_frame, style="White.TFrame")
+        self.layer_size_controls_frame.grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+
+        hidden_button_row = ttk.Frame(self.builder_setup_frame, style="White.TFrame")
+        hidden_button_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(
+            hidden_button_row,
+            text=self.t("add_layer_button"),
+            command=self._add_hidden_layer,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            hidden_button_row,
+            text=self.t("remove_layer_button"),
+            command=self._remove_hidden_layer,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        self._grid_label_with_info(self.builder_setup_frame, 5, self.t("current_layout_label"), "layout")
+        self.builder_layout_entry = ttk.Entry(self.builder_setup_frame, textvariable=self.layout_string_var)
+        self.builder_layout_entry.grid(
+            row=5,
+            column=1,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(6, 0),
+        )
+        self.builder_layout_entry.bind("<Return>", self._on_layout_string_edited)
+        self.builder_layout_entry.bind("<FocusOut>", self._on_layout_string_edited)
+
+        self.builder_layout_editor_frame = ttk.LabelFrame(
+            self.builder_setup_frame,
+            text=self.t("builder_layout_editor_title"),
+            padding=10,
+        )
+        self.builder_layout_editor_frame.grid(
+            row=6,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(10, 0),
+        )
+        self.builder_layout_editor_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            self.builder_layout_editor_frame,
+            text=self.t("builder_layout_editor_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).grid(row=0, column=0, columnspan=2, sticky="ew")
+        editor_info_row = ttk.Frame(self.builder_layout_editor_frame, style="White.TFrame")
+        editor_info_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self._create_info_button(editor_info_row, "builder_layout_editor").pack(side=tk.RIGHT)
+        self._grid_label_with_info(
+            self.builder_layout_editor_frame,
+            2,
+            self.t("layer_fill_label"),
+            "layer_fill",
+            pady=(8, 0),
+        )
+        self.builder_layer_fill_controls_frame = ttk.Frame(
+            self.builder_layout_editor_frame,
+            style="White.TFrame",
+        )
+        self.builder_layer_fill_controls_frame.grid(
+            row=3,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(6, 0),
+        )
+        self.builder_neuron_layer_label = self._grid_label_with_info(
+            self.builder_layout_editor_frame,
+            4,
+            self.t("layer_label"),
+            "neuron_layer",
+            pady=(10, 0),
+        )
+        self.builder_neuron_layer_combo = ttk.Combobox(
+            self.builder_layout_editor_frame,
+            textvariable=self.neuron_layer_var,
+            values=("L1",),
+            state="readonly",
+            width=8,
+        )
+        self.builder_neuron_layer_combo.grid(row=4, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.builder_neuron_layer_combo.bind("<<ComboboxSelected>>", self._on_neuron_layer_changed)
+
+        self.builder_neuron_index_label = self._grid_label_with_info(
+            self.builder_layout_editor_frame,
+            5,
+            self.t("neuron_label"),
+            "neuron_index",
+        )
+        self.builder_neuron_index_combo = ttk.Combobox(
+            self.builder_layout_editor_frame,
+            textvariable=self.neuron_index_var,
+            values=("0",),
+            state="readonly",
+            width=8,
+        )
+        self.builder_neuron_index_combo.grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.builder_neuron_index_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._select_from_controls(),
+        )
+
+        self.builder_neuron_activation_label = self._grid_label_with_info(
+            self.builder_layout_editor_frame,
+            6,
+            self.t("activation_label"),
+            "neuron_activation",
+        )
+        self.builder_neuron_activation_combo = ttk.Combobox(
+            self.builder_layout_editor_frame,
+            textvariable=self.neuron_activation_var,
+            values=SUPPORTED_ACTIVATIONS,
+            state="readonly",
+            width=14,
+        )
+        self.builder_neuron_activation_combo.grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.builder_neuron_button_row = ttk.Frame(self.builder_layout_editor_frame, style="White.TFrame")
+        self.builder_neuron_button_row.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Button(
+            self.builder_neuron_button_row,
+            text=self.t("set_neuron_button"),
+            command=self._apply_neuron_setting,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            self.builder_neuron_button_row,
+            text=self.t("cycle_button"),
+            command=self._cycle_selected_neuron,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        self.builder_layout_row = self._grid_label_with_info(
+            self.builder_setup_frame,
+            7,
+            self.t("builder_layout_choice"),
+            "builder_layout_choice",
+        )
+        self.builder_layout_combo = ttk.Combobox(
+            self.builder_setup_frame,
+            textvariable=self.builder_layout_choice_var,
+            state="readonly",
+            width=26,
+        )
+        self.builder_layout_combo.grid(row=7, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        self.builder_layout_combo.bind("<<ComboboxSelected>>", self._on_builder_layout_option_selected)
+
+        self._grid_label_with_info(
+            self.builder_setup_frame,
+            8,
+            self.t("builder_run_mode"),
+            "builder_setup",
+        )
+        builder_run_mode_combo = ttk.Combobox(
+            self.builder_setup_frame,
+            textvariable=self.builder_run_mode_display_var,
+            values=[self._run_mode_label(value) for value in SUPPORTED_EXPERIMENT_RUN_MODES],
+            state="readonly",
+            width=22,
+        )
+        builder_run_mode_combo.grid(row=8, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        builder_run_mode_combo.bind("<<ComboboxSelected>>", self._on_builder_run_mode_selected)
+
+        self._grid_label_with_info(
+            self.builder_setup_frame,
+            9,
+            self.t("builder_primary_metric"),
+            "builder_primary_metric",
+        )
+        ttk.Combobox(
+            self.builder_setup_frame,
+            textvariable=self.builder_primary_metric_var,
+            values=PRIMARY_METRIC_LABELS,
+            state="readonly",
+            width=22,
+        ).grid(row=9, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+
+        ttk.Label(
+            self.builder_setup_frame,
+            text=self.t("builder_primary_metric_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).grid(row=10, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+        self.builder_seeds_frame = ttk.LabelFrame(parent, text=self.t("builder_seeds_title"), padding=10)
+        self.builder_seeds_frame.pack(fill=tk.X, pady=(0, 10))
+        self.builder_seeds_frame.columnconfigure(1, weight=1)
+        seed_hint_row = ttk.Frame(self.builder_seeds_frame, style="White.TFrame")
+        seed_hint_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(
+            seed_hint_row,
+            text=self.t("builder_seeds_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(seed_hint_row, "builder_seeds").pack(side=tk.RIGHT)
+
+        self._grid_label_with_info(
+            self.builder_seeds_frame,
+            1,
+            self.t("builder_seed_strategy"),
+            "builder_seed_strategy",
+            pady=(10, 0),
+        )
+        seed_strategy_combo = ttk.Combobox(
+            self.builder_seeds_frame,
+            textvariable=self.builder_seed_strategy_display_var,
+            values=[self._seed_strategy_label(value) for value in SEED_STRATEGY_LABELS["de"]],
+            state="readonly",
+            width=22,
+        )
+        seed_strategy_combo.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(10, 0))
+        seed_strategy_combo.bind("<<ComboboxSelected>>", self._on_builder_seed_strategy_selected)
+
+        self._grid_label_with_info(
+            self.builder_seeds_frame,
+            2,
+            self.t("builder_seed_count"),
+            "builder_seed_strategy",
+        )
+        self.builder_seed_count_spinbox = ttk.Spinbox(
+            self.builder_seeds_frame,
+            from_=1,
+            to=256,
+            textvariable=self.builder_seed_count_var,
+            width=8,
+            command=self._update_builder_seed_preview,
+        )
+        self.builder_seed_count_spinbox.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.builder_seed_count_spinbox.bind("<Return>", lambda _event: self._update_builder_seed_preview())
+
+        self._grid_label_with_info(
+            self.builder_seeds_frame,
+            3,
+            self.t("builder_seed_start"),
+            "builder_seed_strategy",
+        )
+        self.builder_seed_start_spinbox = ttk.Spinbox(
+            self.builder_seeds_frame,
+            from_=0,
+            to=999999,
+            textvariable=self.builder_seed_start_var,
+            width=8,
+            command=self._update_builder_seed_preview,
+        )
+        self.builder_seed_start_spinbox.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        self.builder_seed_start_spinbox.bind("<Return>", lambda _event: self._update_builder_seed_preview())
+
+        self._grid_label_with_info(
+            self.builder_seeds_frame,
+            4,
+            self.t("builder_seed_list"),
+            "builder_seed_strategy",
+        )
+        self.builder_seed_list_entry = ttk.Entry(
+            self.builder_seeds_frame,
+            textvariable=self.builder_seed_list_var,
+        )
+        self.builder_seed_list_entry.grid(row=4, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        self.builder_seed_list_entry.bind("<KeyRelease>", lambda _event: self._update_builder_seed_preview())
+
+        self._grid_label_with_info(
+            self.builder_seeds_frame,
+            5,
+            self.t("builder_seed_preview"),
+            "builder_seeds",
+        )
+        ttk.Label(
+            self.builder_seeds_frame,
+            textvariable=self.builder_seed_preview_var,
+            justify=tk.LEFT,
+            style="SectionValue.TLabel",
+            wraplength=300,
+        ).grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self.builder_training_frame = ttk.LabelFrame(parent, text=self.t("builder_training_title"), padding=10)
+        self.builder_training_frame.pack(fill=tk.X, pady=(0, 10))
+        self.builder_training_frame.columnconfigure(1, weight=1)
+        training_hint_row = ttk.Frame(self.builder_training_frame, style="White.TFrame")
+        training_hint_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(
+            training_hint_row,
+            text=self.t("builder_training_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(training_hint_row, "builder_training").pack(side=tk.RIGHT)
+
+        self._grid_label_with_info(self.builder_training_frame, 1, self.t("epochs_label"), "epochs", pady=(10, 0))
+        ttk.Spinbox(
+            self.builder_training_frame,
+            from_=1,
+            to=5000,
+            textvariable=self.epochs_var,
+            width=8,
+        ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+
+        self._grid_label_with_info(self.builder_training_frame, 2, self.t("learning_rate_label"), "learning_rate")
+        ttk.Entry(self.builder_training_frame, textvariable=self.lr_var, width=10).grid(
+            row=2,
+            column=1,
+            sticky="w",
+            padx=(8, 0),
+            pady=(6, 0),
+        )
+
+        self._grid_label_with_info(self.builder_training_frame, 3, self.t("batch_size_label"), "batch_size")
+        ttk.Spinbox(
+            self.builder_training_frame,
+            from_=1,
+            to=4096,
+            textvariable=self.batch_size_var,
+            width=8,
+        ).grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self._grid_label_with_info(self.builder_training_frame, 4, self.t("weight_scale_label"), "weight_scale")
+        ttk.Entry(self.builder_training_frame, textvariable=self.weight_scale_var, width=10).grid(
+            row=4,
+            column=1,
+            sticky="w",
+            padx=(8, 0),
+            pady=(6, 0),
+        )
+
+        self._grid_label_with_info(self.builder_training_frame, 5, self.t("seed_label"), "seed")
+        ttk.Spinbox(
+            self.builder_training_frame,
+            from_=0,
+            to=999999,
+            textvariable=self.builder_random_seed_var,
+            width=8,
+        ).grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        shuffle_row = ttk.Frame(self.builder_training_frame, style="White.TFrame")
+        shuffle_row.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(
+            shuffle_row,
+            text=self.t("shuffle_label"),
+            variable=self.playground_shuffle_var,
+        ).pack(side=tk.LEFT)
+        self._create_info_button(shuffle_row, "shuffle").pack(side=tk.LEFT, padx=(8, 0))
+
+        self.builder_sa_frame = ttk.LabelFrame(parent, text=self.t("builder_sa_title"), padding=10)
+        self.builder_sa_frame.columnconfigure(1, weight=1)
+        sa_hint_row = ttk.Frame(self.builder_sa_frame, style="White.TFrame")
+        sa_hint_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(
+            sa_hint_row,
+            text=self.t("builder_sa_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(sa_hint_row, "builder_sa").pack(side=tk.RIGHT)
+
+        self._grid_label_with_info(self.builder_sa_frame, 1, self.t("objective_label"), "objective", pady=(10, 0))
+        ttk.Combobox(
+            self.builder_sa_frame,
+            textvariable=self.objective_var,
+            values=SUPPORTED_OBJECTIVES,
+            state="readonly",
+            width=20,
+        ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
+
+        self._grid_label_with_info(
+            self.builder_sa_frame,
+            2,
+            self.t("candidate_epochs_label"),
+            "candidate_epochs",
+        )
+        ttk.Spinbox(
+            self.builder_sa_frame,
+            from_=1,
+            to=5000,
+            textvariable=self.candidate_epochs_var,
+            width=8,
+        ).grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self._grid_label_with_info(
+            self.builder_sa_frame,
+            3,
+            self.t("start_temperature_label"),
+            "start_temperature",
+        )
+        ttk.Entry(self.builder_sa_frame, textvariable=self.start_temperature_var, width=10).grid(
+            row=3,
+            column=1,
+            sticky="w",
+            padx=(8, 0),
+            pady=(6, 0),
+        )
+
+        self._grid_label_with_info(
+            self.builder_sa_frame,
+            4,
+            self.t("cooling_schedule_label"),
+            "cooling_schedule",
+        )
+        ttk.Combobox(
+            self.builder_sa_frame,
+            textvariable=self.cooling_schedule_var,
+            values=SUPPORTED_COOLING_SCHEDULES,
+            state="readonly",
+            width=16,
+        ).grid(row=4, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self._grid_label_with_info(
+            self.builder_sa_frame,
+            5,
+            self.t("cooling_parameter_label"),
+            "cooling_parameter",
+        )
+        ttk.Entry(self.builder_sa_frame, textvariable=self.cooling_parameter_var, width=10).grid(
+            row=5,
+            column=1,
+            sticky="w",
+            padx=(8, 0),
+            pady=(6, 0),
+        )
+
+        self._grid_label_with_info(
+            self.builder_sa_frame,
+            6,
+            self.t("iterations_per_temperature_label"),
+            "iterations_per_temperature",
+        )
+        ttk.Spinbox(
+            self.builder_sa_frame,
+            from_=1,
+            to=500,
+            textvariable=self.iterations_per_temperature_var,
+            width=8,
+        ).grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self._grid_label_with_info(
+            self.builder_sa_frame,
+            7,
+            self.t("max_steps_label"),
+            "max_steps",
+        )
+        ttk.Spinbox(
+            self.builder_sa_frame,
+            from_=1,
+            to=5000,
+            textvariable=self.max_steps_var,
+            width=8,
+        ).grid(row=7, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+
+        self._grid_label_with_info(
+            self.builder_sa_frame,
+            8,
+            self.t("min_temperature_label"),
+            "min_temperature",
+        )
+        ttk.Entry(self.builder_sa_frame, textvariable=self.min_temperature_var, width=10).grid(
+            row=8,
+            column=1,
+            sticky="w",
+            padx=(8, 0),
+            pady=(6, 0),
+        )
+
+        neighborhood_row = ttk.Frame(self.builder_sa_frame, style="White.TFrame")
+        neighborhood_row.grid(row=9, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Checkbutton(
+            neighborhood_row,
+            text=self.t("neighbor_set_label"),
+            variable=self.playground_neighbor_vars["set_neuron"],
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            neighborhood_row,
+            text=self.t("neighbor_fill_label"),
+            variable=self.playground_neighbor_vars["fill_layer"],
+        ).pack(anchor="w", pady=(4, 0))
+        ttk.Checkbutton(
+            neighborhood_row,
+            text=self.t("neighbor_swap_label"),
+            variable=self.playground_neighbor_vars["swap_neurons"],
+        ).pack(anchor="w", pady=(4, 0))
+
+        self.builder_tuning_frame = ttk.LabelFrame(parent, text=self.t("builder_tuning_title"), padding=10)
+        self.builder_tuning_frame.pack(fill=tk.X, pady=(0, 10))
+        tuning_hint_row = ttk.Frame(self.builder_tuning_frame, style="White.TFrame")
+        tuning_hint_row.pack(fill=tk.X)
+        ttk.Label(
+            tuning_hint_row,
+            text=self.t("builder_tuning_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(tuning_hint_row, "builder_search").pack(side=tk.RIGHT)
+
+        search_type_row = ttk.Frame(self.builder_tuning_frame, style="White.TFrame")
+        search_type_row.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(search_type_row, text=self.t("builder_search_type")).pack(side=tk.LEFT)
+        self._create_info_button(search_type_row, "builder_search").pack(side=tk.LEFT, padx=(6, 0))
+        search_type_combo = ttk.Combobox(
+            search_type_row,
+            textvariable=self.builder_search_type_display_var,
+            values=[self._search_type_label(value) for value in SUPPORTED_SEARCH_TYPES],
+            state="readonly",
+            width=18,
+        )
+        search_type_combo.pack(side=tk.RIGHT)
+        search_type_combo.bind("<<ComboboxSelected>>", self._on_builder_search_type_selected)
+
+        random_samples_row = ttk.Frame(self.builder_tuning_frame, style="White.TFrame")
+        random_samples_row.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(random_samples_row, text=self.t("builder_random_samples")).pack(side=tk.LEFT)
+        ttk.Spinbox(
+            random_samples_row,
+            from_=1,
+            to=1024,
+            textvariable=self.builder_random_samples_var,
+            width=8,
+        ).pack(side=tk.RIGHT)
+
+        tuning_parameters_frame = ttk.Frame(self.builder_tuning_frame, style="White.TFrame")
+        tuning_parameters_frame.pack(fill=tk.X, pady=(10, 0))
+        for parameter_name, label_text, is_sa_only in self._builder_search_parameter_specs():
+            row = ttk.Frame(tuning_parameters_frame, style="White.TFrame")
+            row.pack(fill=tk.X, pady=(0, 8))
+            left = ttk.Frame(row, style="White.TFrame")
+            left.pack(fill=tk.X)
+            ttk.Label(left, text=label_text).pack(side=tk.LEFT)
+            self._create_info_button(left, "builder_search_value").pack(side=tk.LEFT, padx=(6, 0))
+            mode_combo = ttk.Combobox(
+                row,
+                textvariable=self.builder_tuning_mode_display_vars[parameter_name],
+                values=[self._search_value_kind_label(value) for value in ("fixed", "list", "range")],
+                state="readonly",
+                width=10,
+            )
+            mode_combo.pack(side=tk.LEFT, padx=(0, 6))
+            mode_combo.bind(
+                "<<ComboboxSelected>>",
+                lambda _event, param=parameter_name: self._on_builder_search_value_kind_selected(param),
+            )
+            ttk.Entry(row, textvariable=self.builder_tuning_value_vars[parameter_name], width=24).pack(
+                side=tk.LEFT,
+                fill=tk.X,
+                expand=True,
+            )
+            suggested_values = ", ".join(SUGGESTED_TUNING_VALUES.get(parameter_name, ()))
+            if suggested_values:
+                ttk.Label(
+                    tuning_parameters_frame,
+                    text=(
+                        f"Beispielwerte fuer {label_text}: {suggested_values}"
+                        if not self._is_english()
+                        else f"Suggested values for {label_text}: {suggested_values}"
+                    ),
+                    style="Hint.TLabel",
+                    justify=tk.LEFT,
+                    wraplength=300,
+                ).pack(anchor="w", pady=(0, 4))
+            self.builder_tuning_rows[parameter_name] = row
+            if is_sa_only:
+                row._builder_sa_only = True  # type: ignore[attr-defined]
+
+        self.builder_storage_frame = ttk.LabelFrame(parent, text=self.t("builder_storage_title"), padding=10)
+        self.builder_storage_frame.pack(fill=tk.X, pady=(0, 10))
+        self.builder_storage_frame.columnconfigure(1, weight=1)
+        storage_hint_row = ttk.Frame(self.builder_storage_frame, style="White.TFrame")
+        storage_hint_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(
+            storage_hint_row,
+            text=self.t("builder_storage_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(storage_hint_row, "builder_storage").pack(side=tk.RIGHT)
+
+        self._grid_label_with_info(
+            self.builder_storage_frame,
+            1,
+            self.t("builder_output_dir"),
+            "builder_output_dir",
+            pady=(10, 0),
+        )
+        ttk.Entry(self.builder_storage_frame, textvariable=self.builder_output_dir_var).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(10, 0),
+        )
+
+        storage_check_row = ttk.Frame(self.builder_storage_frame, style="White.TFrame")
+        storage_check_row.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(
+            storage_check_row,
+            text=self.t("builder_save_json"),
+            variable=self.builder_save_json_var,
+        ).pack(side=tk.LEFT)
+
+        self._grid_label_with_info(
+            self.builder_storage_frame,
+            3,
+            self.t("builder_load_path"),
+            "builder_load_path",
+        )
+        ttk.Entry(self.builder_storage_frame, textvariable=self.builder_load_path_var).grid(
+            row=3,
+            column=1,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(6, 0),
+        )
+
+        self.builder_run_frame = ttk.LabelFrame(parent, text=self.t("builder_run_title"), padding=10)
+        self.builder_run_frame.pack(fill=tk.X, pady=(0, 10))
+        run_hint_row = ttk.Frame(self.builder_run_frame, style="White.TFrame")
+        run_hint_row.pack(fill=tk.X)
+        ttk.Label(
+            run_hint_row,
+            text=self.t("builder_run_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+            wraplength=300,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._create_info_button(run_hint_row, "builder_run_control").pack(side=tk.RIGHT)
+
+        button_row = ttk.Frame(self.builder_run_frame, style="White.TFrame")
+        button_row.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(
+            button_row,
+            text=self.t("builder_validate_button"),
+            command=self._validate_builder_experiment,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            button_row,
+            text=self.t("builder_run_button"),
+            command=self._run_builder_experiment,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(
+            button_row,
+            text=self.t("builder_load_results_button"),
+            command=self._load_builder_results,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(
+            self.builder_run_frame,
+            textvariable=self.builder_status_var,
+            justify=tk.LEFT,
+            style="SectionValue.TLabel",
+            wraplength=320,
+        ).pack(anchor="w", pady=(10, 0))
+
+        self.builder_expert_only_widgets = [
+            self.builder_layout_editor_frame,
+            self.builder_layout_row,
+            self.builder_layout_combo,
+        ]
+
+        self._rebuild_hidden_size_controls()
+        self._update_builder_seed_preview()
+        self._update_builder_layout_options()
+        self._apply_builder_detail_level_visibility()
+        self._apply_builder_run_mode_visibility()
+        self._apply_builder_search_type_visibility()
+
+    def _build_experiment_builder_content(self, parent: ttk.Frame) -> None:
+        """Baut den rechten Analysebereich fuer den Experiment Builder."""
+
+        summary_frame = ttk.LabelFrame(parent, text=self.t("builder_summary_title"), padding=10)
+        summary_frame.grid(row=0, column=0, sticky="ew")
+        ttk.Label(
+            summary_frame,
+            textvariable=self.builder_summary_var,
+            justify=tk.LEFT,
+            style="SectionValue.TLabel",
+            wraplength=1040,
+        ).pack(anchor="w")
+        ttk.Label(
+            summary_frame,
+            textvariable=self.network_summary_var,
+            justify=tk.LEFT,
+            style="Hint.TLabel",
+            wraplength=1040,
+        ).pack(anchor="w", pady=(8, 0))
+
+        self._build_network_preview_frame(parent, row=1, pady=(10, 10))
+
+        notebook_frame = ttk.LabelFrame(parent, text=self.t("notebook_frame_title"), padding=6)
+        notebook_frame.grid(row=2, column=0, sticky="nsew")
+        notebook_frame.columnconfigure(0, weight=1)
+        notebook_frame.rowconfigure(0, weight=1)
+
+        self.notebook = ttk.Notebook(notebook_frame)
+        self.notebook.grid(row=0, column=0, sticky="nsew")
+
+        self.builder_overview_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
+        self.builder_runs_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
+        self.builder_analysis_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
+        self.builder_detail_tab_frame = ttk.Frame(self.notebook, style="Notebook.TFrame")
+        self.builder_plots_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
+        self.help_tab = ttk.Frame(self.notebook, style="Notebook.TFrame")
+
+        self.notebook.add(self.builder_overview_tab, text=self.t("builder_overview_tab"))
+        self.notebook.add(self.builder_runs_tab, text=self.t("builder_runs_tab"))
+        self.notebook.add(self.builder_analysis_tab, text=self.t("builder_analysis_tab"))
+        self.notebook.add(self.builder_detail_tab_frame, text=self.t("builder_detail_tab"))
+        self.notebook.add(self.builder_plots_tab, text=self.t("builder_plots_tab"))
+        self.notebook.add(self.help_tab, text=self.t("builder_help_tab"))
+
+        self.builder_overview_tab.columnconfigure(0, weight=1)
+        self.builder_overview_tab.rowconfigure(1, weight=1)
+        ttk.Label(
+            self.builder_overview_tab,
+            text=self.t("builder_mode_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+        self.builder_summary_text = ScrolledText(self.builder_overview_tab, wrap=tk.WORD)
+        self.builder_summary_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.builder_summary_text.configure(state=tk.DISABLED, font=("Menlo", 11))
+
+        self.builder_runs_tab.columnconfigure(0, weight=1)
+        self.builder_runs_tab.rowconfigure(1, weight=1)
+        ttk.Label(
+            self.builder_runs_tab,
+            text=self.t("builder_run_tree_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+        columns = ("run_id", "config_id", "seed", "val_acc", "val_loss", "test_acc", "mode")
+        self.builder_run_tree = ttk.Treeview(
+            self.builder_runs_tab,
+            columns=columns,
+            show="headings",
+            height=18,
+        )
+        for column, title, width in (
+            ("run_id", "run_id", 190),
+            ("config_id", "config", 90),
+            ("seed", "seed", 70),
+            ("val_acc", "val_acc", 90),
+            ("val_loss", "val_loss", 90),
+            ("test_acc", "test_acc", 90),
+            ("mode", "mode", 140),
+        ):
+            self.builder_run_tree.heading(column, text=title)
+            self.builder_run_tree.column(column, width=width, anchor="w")
+        self.builder_run_tree.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.builder_run_tree.bind("<<TreeviewSelect>>", self._on_builder_run_selected)
+
+        self.builder_analysis_tab.columnconfigure(0, weight=1)
+        self.builder_analysis_tab.rowconfigure(1, weight=1)
+        ttk.Label(
+            self.builder_analysis_tab,
+            text=self.t("builder_analysis_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+        self.builder_analysis_text = ScrolledText(self.builder_analysis_tab, wrap=tk.WORD)
+        self.builder_analysis_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.builder_analysis_text.configure(state=tk.DISABLED, font=("Menlo", 11))
+
+        self.builder_detail_tab_frame.columnconfigure(0, weight=1)
+        self.builder_detail_tab_frame.rowconfigure(1, weight=1)
+        ttk.Label(
+            self.builder_detail_tab_frame,
+            text=self.t("builder_detail_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+        self.builder_detail_text = ScrolledText(self.builder_detail_tab_frame, wrap=tk.WORD)
+        self.builder_detail_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.builder_detail_text.configure(state=tk.DISABLED, font=("Menlo", 11))
+
+        self.builder_plots_tab.columnconfigure(0, weight=1)
+        self.builder_plots_tab.rowconfigure(1, weight=1)
+        ttk.Label(
+            self.builder_plots_tab,
+            text=self.t("builder_plot_hint"),
+            style="Hint.TLabel",
+            justify=tk.LEFT,
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+        self.builder_plot_container = ttk.Frame(self.builder_plots_tab, style="White.TFrame")
+        self.builder_plot_container.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.builder_plot_container.columnconfigure(0, weight=1)
+        self.builder_plot_container.rowconfigure(0, weight=1)
+
+        self._build_help_tab()
+
+    def _builder_search_parameter_specs(self) -> list[tuple[str, str, bool]]:
+        """Beschreibt die Builder-Tuningparameter mit Label und SA-Relevanz."""
+
+        return [
+            ("learning_rate", self.t("learning_rate_label"), False),
+            ("batch_size", self.t("batch_size_label"), False),
+            ("weight_scale", self.t("weight_scale_label"), False),
+            ("epochs", self.t("epochs_label"), False),
+            ("candidate_epochs", self.t("candidate_epochs_label"), True),
+            ("start_temperature", self.t("start_temperature_label"), True),
+            ("cooling_schedule", self.t("cooling_schedule_label"), True),
+            ("cooling_parameter", self.t("cooling_parameter_label"), True),
+        ]
+
+    def _on_builder_run_mode_selected(self, _event=None) -> None:
+        """Synchronisiert das sichtbare Builder-Run-Mode-Label."""
+
+        self.builder_run_mode_var.set(
+            self._run_mode_from_label(self.builder_run_mode_display_var.get())
+        )
+        self._apply_builder_run_mode_visibility()
+        self._refresh_views()
+
+    def _on_builder_search_type_selected(self, _event=None) -> None:
+        """Synchronisiert Search-Type-Label und Sichtbarkeit."""
+
+        self.builder_search_type_var.set(
+            self._search_type_from_label(self.builder_search_type_display_var.get())
+        )
+        self._apply_builder_search_type_visibility()
+        self._refresh_views()
+
+    def _on_builder_seed_strategy_selected(self, _event=None) -> None:
+        """Synchronisiert das sichtbare Seed-Strategie-Label."""
+
+        self.builder_seed_strategy_var.set(
+            self._seed_strategy_from_label(self.builder_seed_strategy_display_var.get())
+        )
+        self._update_builder_seed_preview()
+
+    def _on_builder_search_value_kind_selected(self, parameter_name: str) -> None:
+        """Uebernimmt den sichtbaren Search-Kind-Wert in den internen Builder-Zustand."""
+
+        selected_kind = self._search_value_kind_from_label(
+            self.builder_tuning_mode_display_vars[parameter_name].get()
+        )
+        self.builder_tuning_mode_vars[parameter_name].set(selected_kind)
+        base_values = {
+            "learning_rate": self.lr_var.get(),
+            "batch_size": str(self.batch_size_var.get()),
+            "weight_scale": self.weight_scale_var.get(),
+            "epochs": str(self.epochs_var.get()),
+            "candidate_epochs": str(self.candidate_epochs_var.get()),
+            "start_temperature": self.start_temperature_var.get(),
+            "cooling_schedule": self.cooling_schedule_var.get(),
+            "cooling_parameter": self.cooling_parameter_var.get(),
+        }
+        if selected_kind == "fixed":
+            self.builder_tuning_value_vars[parameter_name].set(base_values[parameter_name])
+            return
+        if selected_kind == "list":
+            suggested = SUGGESTED_TUNING_VALUES.get(parameter_name)
+            if suggested:
+                self.builder_tuning_value_vars[parameter_name].set(", ".join(suggested))
+            return
+        if parameter_name == "cooling_schedule":
+            self.builder_tuning_mode_vars[parameter_name].set("list")
+            self.builder_tuning_mode_display_vars[parameter_name].set(
+                self._search_value_kind_label("list")
+            )
+            self.builder_tuning_value_vars[parameter_name].set(
+                ", ".join(SUPPORTED_COOLING_SCHEDULES)
+            )
+            return
+        suggested = SUGGESTED_TUNING_VALUES.get(parameter_name)
+        if suggested and len(suggested) >= 2:
+            if parameter_name in {"batch_size", "epochs", "candidate_epochs"}:
+                step = int(suggested[1]) - int(suggested[0])
+                self.builder_tuning_value_vars[parameter_name].set(
+                    f"{suggested[0]}:{suggested[-1]}:{step}"
+                )
+            else:
+                step = float(suggested[1]) - float(suggested[0])
+                self.builder_tuning_value_vars[parameter_name].set(
+                    f"{suggested[0]}:{suggested[-1]}:{step:.3f}".rstrip("0").rstrip(".")
+                )
+
+    def _apply_builder_run_mode_visibility(self) -> None:
+        """Blendet SA-spezifische Builder-Bereiche je nach Run-Modus ein oder aus."""
+
+        if self.builder_sa_frame is None:
+            return
+        is_sa = self.builder_run_mode_var.get() == "simulated_annealing"
+        if is_sa:
+            if not self.builder_sa_frame.winfo_manager():
+                self.builder_sa_frame.pack(fill=tk.X, pady=(0, 10), before=self.builder_tuning_frame)
+        else:
+            if self.builder_sa_frame.winfo_manager():
+                self.builder_sa_frame.pack_forget()
+        for parameter_name in ("candidate_epochs", "start_temperature", "cooling_schedule", "cooling_parameter"):
+            row = self.builder_tuning_rows.get(parameter_name)
+            if row is None:
+                continue
+            if is_sa:
+                if not row.winfo_manager():
+                    row.pack(fill=tk.X, pady=(0, 8))
+            else:
+                if row.winfo_manager():
+                    row.pack_forget()
+
+    def _apply_builder_search_type_visibility(self) -> None:
+        """Passt Builder-Hinweise an den Search-Typ an."""
+
+        search_type = self.builder_search_type_var.get()
+        if search_type == "random_search":
+            self.builder_status_var.set(
+                (
+                    "Random Search aktiv: Es werden reproduzierbar nur Teilmengen des diskreten Suchraums getestet."
+                    if not self._is_english()
+                    else "Random search active: only a reproducible subset of the discrete search space will be evaluated."
+                )
+            )
+        elif self.builder_loaded_payload is None and self.builder_last_execution is None:
+            self.builder_status_var.set(self.t("builder_status_idle"))
+
+    def _update_builder_seed_preview(self) -> None:
+        """Aktualisiert die sichtbare Vorschau der effektiven Seeds."""
+
+        try:
+            preview = ", ".join(str(seed) for seed in self._effective_builder_seeds())
+            self.builder_seed_preview_var.set(preview)
+        except Exception as exc:
+            self.builder_seed_preview_var.set(str(exc))
+
+    def _builder_layout_label(self, base_label: str, layout_spec: str) -> str:
+        """Formatiert einen lesbaren Eintrag fuer die Builder-Layoutliste."""
+
+        return f"{base_label}: {layout_spec}"
+
+    def _update_builder_layout_options(self) -> None:
+        """Sammelt aktuell verfuegbare Layouts fuer die Builder-Netzvorschau."""
+
+        current_selection = self.builder_layout_choice_var.get()
+        options: dict[str, dict[str, Any]] = {}
+        setup_layout_spec = (
+            self.builder_config_layout.to_compact_spec()
+            if self.builder_config_layout is not None
+            else self.layout_string_var.get().strip() or DEFAULT_LAYOUT
+        )
+        setup_label = (
+            self._builder_layout_label("Setup-Layout", setup_layout_spec)
+            if not self._is_english()
+            else self._builder_layout_label("Setup Layout", setup_layout_spec)
+        )
+        options[setup_label] = {
+            "source": "setup",
+            "layout_spec": setup_layout_spec,
+            "benchmark": self.benchmark_var.get(),
+            "seed": int(self.builder_seed_start_var.get()),
+            "model_state": None,
+            "history": None,
+            "metrics": None,
+        }
+
+        run_payload = self._selected_builder_run_payload()
+        if run_payload is not None:
+            run_definition = run_payload["run_definition"]
+            extra = run_payload.get("extra", {})
+            benchmark = run_definition["benchmark"]
+            seed = int(run_definition["seed"])
+
+            final_label = (
+                self._builder_layout_label("Selektierter Run", run_payload["layout_spec"])
+                if not self._is_english()
+                else self._builder_layout_label("Selected Run", run_payload["layout_spec"])
+            )
+            options[final_label] = {
+                "source": "selected_run",
+                "layout_spec": run_payload["layout_spec"],
+                "benchmark": benchmark,
+                "seed": seed,
+                "model_state": extra.get("model_state") or extra.get("current_model_state") or extra.get("best_model_state"),
+                "history": run_payload.get("history"),
+                "metrics": run_payload.get("metrics"),
+            }
+
+            if run_definition["run_mode"] == "simulated_annealing":
+                for label_key, layout_key, model_key in (
+                    ("Startlayout", "start_layout_spec", "start_model_state"),
+                    ("Bestlayout", "best_layout_spec", "best_model_state"),
+                    ("Endlayout", "end_layout_spec", "current_model_state"),
+                ):
+                    layout_spec = extra.get(layout_key)
+                    if not layout_spec:
+                        continue
+                    label_prefix = label_key if not self._is_english() else {
+                        "Startlayout": "Start Layout",
+                        "Bestlayout": "Best Layout",
+                        "Endlayout": "End Layout",
+                    }[label_key]
+                    label = self._builder_layout_label(label_prefix, str(layout_spec))
+                    options[label] = {
+                        "source": layout_key,
+                        "layout_spec": str(layout_spec),
+                        "benchmark": benchmark,
+                        "seed": seed,
+                        "model_state": extra.get(model_key),
+                        "history": run_payload.get("history"),
+                        "metrics": run_payload.get("metrics"),
+                    }
+
+        self.builder_layout_options = options
+        if self._widget_exists(self.builder_layout_combo):
+            values = list(options)
+            self.builder_layout_combo.configure(values=values)
+        if current_selection in options:
+            self.builder_layout_choice_var.set(current_selection)
+        elif options:
+            self.builder_layout_choice_var.set(next(iter(options)))
+
+    def _apply_builder_detail_level_visibility(self) -> None:
+        """Blendet Builder-Expertendetails wie die Layoutliste je nach Detailstufe ein oder aus."""
+
+        is_expert = self.mode_var.get() == "expert"
+        for widget in self.builder_expert_only_widgets:
+            if not self._widget_exists(widget):
+                continue
+            if is_expert:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+    def _on_builder_layout_option_selected(self, _event=None) -> None:
+        """Aktualisiert die Builder-Netzvorschau anhand des gewaelten Layout-Eintrags."""
+
+        self._sync_builder_preview_state()
+        self._refresh_views()
+
+    def _builder_training_result_from_run_payload(self, run_payload: dict[str, Any]) -> TrainingResult:
+        """Rekonstruiert ein TrainingResult aus gespeicherten Builder-Run-Daten."""
+
+        metrics = run_payload.get("metrics", {})
+        return TrainingResult(
+            history={
+                key: [float(value) for value in values]
+                for key, values in run_payload.get("history", {}).items()
+            },
+            test_metrics={
+                "loss": float(metrics.get("test_loss", 0.0)),
+                "accuracy": float(metrics.get("test_accuracy", 0.0)),
+            },
+        )
+
+    def _sync_builder_preview_state(self) -> None:
+        """Synchronisiert Dataset, Modell und Layout fuer die Builder-Netzvorschau."""
+
+        selection = self.builder_layout_choice_var.get()
+        if not selection or selection not in self.builder_layout_options:
+            return
+        option = self.builder_layout_options[selection]
+        benchmark = str(option["benchmark"])
+        seed = int(option["seed"])
+        layout_spec = str(option["layout_spec"])
+        source = str(option.get("source", "setup"))
+
+        self.use_custom_sample_var.set(False)
+        self.dataset = load_benchmark(DatasetConfig(name=benchmark, random_state=seed))
+        model_state = option.get("model_state")
+        if source == "setup":
+            hidden_sizes = self._current_hidden_sizes()
+            editable_layout = self.builder_config_layout or parse_layout_spec(layout_spec, hidden_sizes)
+            self.current_layout = editable_layout
+            self.model = ModularMLP(
+                input_size=self.dataset.input_size,
+                hidden_sizes=hidden_sizes,
+                output_size=self.dataset.output_size,
+                layout=editable_layout,
+                weight_scale=float(self.weight_scale_var.get()),
+                random_state=seed,
+            )
+        elif model_state:
+            self.model = ModularMLP.from_state_dict(model_state)
+            if self.model.hidden_sizes != self._current_hidden_sizes():
+                self._set_hidden_sizes(self.model.hidden_sizes)
+            self.current_layout = self.model.layout
+        else:
+            hidden_sizes = self._current_hidden_sizes()
+            self.current_layout = parse_layout_spec(layout_spec, hidden_sizes)
+            self.model = ModularMLP(
+                input_size=self.dataset.input_size,
+                hidden_sizes=hidden_sizes,
+                output_size=self.dataset.output_size,
+                layout=self.current_layout,
+                weight_scale=float(self.weight_scale_var.get()),
+                random_state=seed,
+            )
+        history = option.get("history")
+        metrics = option.get("metrics")
+        if history and metrics:
+            fake_run_payload = {"history": history, "metrics": metrics}
+            self.training_result = self._builder_training_result_from_run_payload(fake_run_payload)
+            self.completed_epochs = len(self.training_result.history.get("train_loss", []))
+        else:
+            self.training_result = None
+            self.completed_epochs = 0
+        self._update_target_options()
+        self._ensure_selected_hidden_is_valid()
+        self._update_neuron_dropdowns()
+        self._update_sample_spinbox_range()
+        self._prepare_custom_samples_for_benchmark()
+
+    def _build_content(self, parent: ttk.Frame) -> None:
+        """Rechter Bereich mit Netzwerk, Input-Ansicht, Plotting und Lernhilfe."""
+
+        if self._app_mode() == "experiment_builder":
+            self._build_experiment_builder_content(parent)
+            return
+
+        summary_frame = ttk.LabelFrame(parent, text=self.t("summary_frame_title"), padding=10)
+        summary_frame.grid(row=0, column=0, sticky="ew")
+        ttk.Label(
+            summary_frame,
+            textvariable=self.network_summary_var,
+            justify=tk.LEFT,
+            style="SectionValue.TLabel",
+            wraplength=1040,
+        ).pack(anchor="w")
+        self._build_network_preview_frame(parent, row=1, pady=(10, 10))
 
         notebook_frame = ttk.LabelFrame(parent, text=self.t("notebook_frame_title"), padding=6)
         notebook_frame.grid(row=2, column=0, sticky="nsew")
@@ -2449,22 +4120,109 @@ class PlaygroundGUI:
             row.pack(fill=tk.X, pady=(0, 4))
             label = ttk.Label(row, text=f"L{layer_index + 1}", width=5)
             label.pack(side=tk.LEFT)
-            spinbox = ttk.Spinbox(row, from_=1, to=256, textvariable=variable, width=8)
+            spinbox = ttk.Spinbox(
+                row,
+                from_=1,
+                to=256,
+                textvariable=variable,
+                width=8,
+                command=self._on_hidden_size_controls_changed,
+            )
             spinbox.pack(side=tk.LEFT)
+            spinbox.bind("<Return>", self._on_hidden_size_controls_changed)
+            spinbox.bind("<FocusOut>", self._on_hidden_size_controls_changed)
             self.hidden_layer_size_labels.append(label)
             self.hidden_size_spinboxes.append(spinbox)
 
-    def _rebuild_layer_fill_controls(self) -> None:
-        """Baut die layerweisen Aktivierungs-Controls passend zur aktuellen Layerzahl neu auf."""
+    def _editable_layout(self) -> ActivationLayout | None:
+        """Liefert das Layout, das durch die linken Layout-Controls bearbeitet wird."""
 
-        if self.layer_fill_controls_frame is None:
+        if self._app_mode() == "experiment_builder":
+            return self.builder_config_layout
+        return self.current_layout
+
+    def _layer_summary_text(self, layout: ActivationLayout) -> str:
+        """Erzeugt die kompakte Layerzusammenfassung fuer ein Layout."""
+
+        return "\n".join(
+            (
+                f"L{layer_index + 1}: {len(layer)} Neuronen, Start-Aktivierung {layer[0]}"
+                if not self._is_english()
+                else f"L{layer_index + 1}: {len(layer)} neurons, starting activation {layer[0]}"
+            )
+            for layer_index, layer in enumerate(layout.layers)
+        )
+
+    def _sync_layout_editor_state(
+        self,
+        layout: ActivationLayout,
+        *,
+        update_preview: bool,
+    ) -> None:
+        """Synchronisiert String, Editor-Variablen und optional die Builder-Vorschau."""
+
+        if self._app_mode() == "experiment_builder":
+            self.builder_config_layout = layout
+        else:
+            self.current_layout = layout
+            if self.model is not None:
+                self.model.layout = layout
+
+        self.layout_string_var.set(layout.to_compact_spec())
+        self.layer_summary_var.set(self._layer_summary_text(layout))
+        for layer_index, layer in enumerate(layout.layers):
+            if layer_index < len(self.layer_fill_vars):
+                self.layer_fill_vars[layer_index].set(layer[0])
+        self._ensure_selected_hidden_is_valid()
+        self._update_neuron_dropdowns()
+        self._rebuild_layer_fill_controls()
+
+        if self._app_mode() == "experiment_builder":
+            self._update_builder_layout_options()
+            if update_preview and self._builder_preview_tracks_setup_layout():
+                self._sync_builder_preview_state()
+                self._refresh_views()
+            elif update_preview:
+                self._refresh_views()
+        elif self._app_mode() == "playground":
+            self._initialize_playground_state()
+        else:
+            self._refresh_views()
+
+    def _builder_preview_tracks_setup_layout(self) -> bool:
+        """Prueft, ob die Builder-Vorschau aktuell auf dem Setup-Layout steht."""
+
+        selection = self.builder_layout_choice_var.get()
+        if not selection or selection not in self.builder_layout_options:
+            return True
+        return self.builder_layout_options[selection].get("source") == "setup"
+
+    def _on_hidden_size_controls_changed(self, _event=None) -> None:
+        """Aktualisiert Layout und Vorschau nach Aenderungen an Hidden-Groessen."""
+
+        try:
+            hidden_sizes = self._current_hidden_sizes()
+            self.current_layout = None
+            self.builder_config_layout = None
+            resolved_layout = self._resolve_layout_for_hidden_sizes(hidden_sizes)
+            self.layout_string_var.set(resolved_layout.to_compact_spec())
+            self._reload_experiment()
+        except (tk.TclError, ValueError):
             return
-        for child in self.layer_fill_controls_frame.winfo_children():
+
+    def _rebuild_layer_fill_controls_for(
+        self,
+        frame: ttk.Frame,
+        combo_store: list[ttk.Combobox],
+    ) -> None:
+        """Baut die layerweisen Aktivierungs-Controls fuer einen Ziel-Frame neu auf."""
+
+        for child in frame.winfo_children():
             child.destroy()
-        self.layer_fill_combos.clear()
+        combo_store.clear()
 
         for layer_index, variable in enumerate(self.layer_fill_vars):
-            row = ttk.Frame(self.layer_fill_controls_frame, style="White.TFrame")
+            row = ttk.Frame(frame, style="White.TFrame")
             row.pack(fill=tk.X, pady=(0, 6))
             ttk.Label(
                 row,
@@ -2488,10 +4246,27 @@ class PlaygroundGUI:
                 text="setzen" if not self._is_english() else "set",
                 command=lambda li=layer_index: self._fill_layer(li),
             ).pack(side=tk.LEFT, padx=(8, 0))
-            self.layer_fill_combos.append(combo)
+            combo_store.append(combo)
+
+    def _rebuild_layer_fill_controls(self) -> None:
+        """Baut die layerweisen Aktivierungs-Controls passend zur aktuellen Layerzahl neu auf."""
+
+        if self.layer_fill_controls_frame is not None:
+            self._rebuild_layer_fill_controls_for(
+                self.layer_fill_controls_frame,
+                self.layer_fill_combos,
+            )
+        if self.builder_layer_fill_controls_frame is not None:
+            self._rebuild_layer_fill_controls_for(
+                self.builder_layer_fill_controls_frame,
+                self.builder_layer_fill_combos,
+            )
 
     def _apply_mode_visibility(self) -> None:
         """Blendet Expertenfunktionen je nach Modus ein oder aus."""
+
+        if self._app_mode() == "experiment_builder":
+            return
 
         is_expert = self.mode_var.get() == "expert"
         is_playground = self._app_mode() == "playground"
@@ -2520,6 +4295,8 @@ class PlaygroundGUI:
         """Aktualisiert die GUI zwischen Einsteiger- und Expertenmodus."""
 
         self._sync_mode_display_var()
+        if self._app_mode() == "experiment_builder":
+            self._apply_builder_detail_level_visibility()
         self._apply_mode_visibility()
         self._refresh_views()
 
@@ -2536,9 +4313,10 @@ class PlaygroundGUI:
         last_activation = self.layer_fill_vars[-1].get() if self.layer_fill_vars else "relu"
         self.hidden_size_vars.append(tk.IntVar(value=last_size))
         self.layer_fill_vars.append(tk.StringVar(value=last_activation))
-        if self.current_layout is not None:
-            self.current_layout = self.current_layout.add_layer(last_size, activation_name=last_activation)
-            self.layout_string_var.set(self.current_layout.to_compact_spec())
+        editable_layout = self._editable_layout()
+        if editable_layout is not None:
+            updated_layout = editable_layout.add_layer(last_size, activation_name=last_activation)
+            self.layout_string_var.set(updated_layout.to_compact_spec())
         self._rebuild_hidden_size_controls()
         self._rebuild_layer_fill_controls()
         self._reload_experiment()
@@ -2554,9 +4332,10 @@ class PlaygroundGUI:
             return
         self.hidden_size_vars.pop()
         self.layer_fill_vars.pop()
-        if self.current_layout is not None:
-            self.current_layout = self.current_layout.remove_layer(len(self.current_layout.layers) - 1)
-            self.layout_string_var.set(self.current_layout.to_compact_spec())
+        editable_layout = self._editable_layout()
+        if editable_layout is not None:
+            updated_layout = editable_layout.remove_layer(len(editable_layout.layers) - 1)
+            self.layout_string_var.set(updated_layout.to_compact_spec())
         self._rebuild_hidden_size_controls()
         self._rebuild_layer_fill_controls()
         self._reload_experiment()
@@ -2755,20 +4534,13 @@ class PlaygroundGUI:
                 self.current_layout = self._resolve_layout_for_hidden_sizes(hidden_sizes)
             else:
                 self.current_layout = parse_layout_spec(self.layout_string_var.get(), hidden_sizes)
+            if self._app_mode() == "experiment_builder":
+                self.builder_config_layout = self.current_layout
             self.layout_string_var.set(self.current_layout.to_compact_spec())
             self._set_hidden_sizes(hidden_sizes)
             for layer_index, layer in enumerate(self.current_layout.layers):
                 self.layer_fill_vars[layer_index].set(layer[0])
-            self.layer_summary_var.set(
-                "\n".join(
-                    (
-                        f"L{layer_index + 1}: {len(layer)} Neuronen, Start-Aktivierung {layer[0]}"
-                        if not self._is_english()
-                        else f"L{layer_index + 1}: {len(layer)} neurons, starting activation {layer[0]}"
-                    )
-                    for layer_index, layer in enumerate(self.current_layout.layers)
-                )
-            )
+            self.layer_summary_var.set(self._layer_summary_text(self.current_layout))
 
             if reinitialize_model or self.model is None:
                 self.model = ModularMLP(
@@ -2806,6 +4578,21 @@ class PlaygroundGUI:
         except ValueError:
             return parse_layout_spec(DEFAULT_LAYOUT, hidden_sizes)
 
+    def _on_layout_string_edited(self, _event=None) -> None:
+        """Parst einen manuell geaenderten Layout-String und synchronisiert den Editor."""
+
+        try:
+            hidden_sizes = self._current_hidden_sizes()
+            layout = parse_layout_spec(self.layout_string_var.get().strip() or DEFAULT_LAYOUT, hidden_sizes)
+        except ValueError as exc:
+            messagebox.showerror(self.t("load_error_title"), str(exc))
+            editable_layout = self._editable_layout()
+            if editable_layout is not None:
+                self.layout_string_var.set(editable_layout.to_compact_spec())
+            return
+
+        self._sync_layout_editor_state(layout, update_preview=True)
+
     def _prepare_custom_samples_for_benchmark(self) -> None:
         """Initialisiert benchmark-spezifische Custom-Samples."""
 
@@ -2825,6 +4612,8 @@ class PlaygroundGUI:
 
         if self.dataset is None:
             return
+        if not self._widget_exists(getattr(self, "analysis_target_combo", None)):
+            return
         current_token = self._analysis_target_token()
         values = [self._target_auto_label(), self._target_none_label(), *self.dataset.target_names]
         self.analysis_target_combo.configure(values=values)
@@ -2835,37 +4624,57 @@ class PlaygroundGUI:
     def _ensure_selected_hidden_is_valid(self) -> None:
         """Sorgt dafuer, dass das selektierte Hidden-Neuron existiert."""
 
-        if self.current_layout is None:
+        layout = self._editable_layout()
+        if layout is None:
             self.selected_hidden = (0, 0)
             return
         layer_index, neuron_index = self.selected_hidden
-        layer_index = min(max(layer_index, 0), len(self.current_layout.layers) - 1)
-        neuron_index = min(max(neuron_index, 0), len(self.current_layout.layers[layer_index]) - 1)
+        layer_index = min(max(layer_index, 0), len(layout.layers) - 1)
+        neuron_index = min(max(neuron_index, 0), len(layout.layers[layer_index]) - 1)
         self.selected_hidden = (layer_index, neuron_index)
 
     def _update_neuron_dropdowns(self) -> None:
         """Aktualisiert die moeglichen Neuron-Indizes im Dropdown."""
 
-        if self.current_layout is None:
+        layout = self._editable_layout()
+        if layout is None:
             return
-        layer_values = tuple(f"L{layer_index + 1}" for layer_index in range(len(self.current_layout.layers)))
-        self.neuron_layer_combo.configure(values=layer_values)
+        layer_values = tuple(f"L{layer_index + 1}" for layer_index in range(len(layout.layers)))
+        combo_widgets = [
+            widget
+            for widget in (
+                getattr(self, "neuron_layer_combo", None),
+                getattr(self, "builder_neuron_layer_combo", None),
+            )
+            if self._widget_exists(widget)
+        ]
+        if not combo_widgets:
+            return
+        for combo in combo_widgets:
+            combo.configure(values=layer_values)
         if self.neuron_layer_var.get() not in layer_values:
             self.neuron_layer_var.set(layer_values[0])
         layer_index = int(self.neuron_layer_var.get().replace("L", "")) - 1
-        values = [str(index) for index in range(len(self.current_layout.layers[layer_index]))]
-        self.neuron_index_combo.configure(values=values)
+        values = [str(index) for index in range(len(layout.layers[layer_index]))]
+        for combo in (
+            getattr(self, "neuron_index_combo", None),
+            getattr(self, "builder_neuron_index_combo", None),
+        ):
+            if self._widget_exists(combo):
+                combo.configure(values=values)
 
         selected_layer, selected_neuron = self.selected_hidden
         if selected_layer == layer_index:
             self.neuron_index_var.set(str(selected_neuron))
-            self.neuron_activation_var.set(self.current_layout.layers[layer_index][selected_neuron])
+            self.neuron_activation_var.set(layout.layers[layer_index][selected_neuron])
         elif values:
             self.neuron_index_var.set(values[0])
 
     def _update_sample_spinbox_range(self) -> None:
         """Passt den Sample-Bereich an den aktuellen Split an."""
 
+        if not self._widget_exists(getattr(self, "sample_spinbox", None)):
+            return
         X_split, _ = self._get_current_split_arrays()
         max_index = max(len(X_split) - 1, 0)
         self.sample_spinbox.configure(to=max_index)
@@ -2998,60 +4807,49 @@ class PlaygroundGUI:
     def _fill_layer(self, layer_index: int) -> None:
         """Setzt einen ganzen Hidden-Layer auf eine Aktivierung."""
 
-        if self.current_layout is None or self.model is None:
+        layout = self._editable_layout()
+        if layout is None:
             return
         activation_name = self.layer_fill_vars[layer_index].get()
-        self.current_layout = self.current_layout.replace_layer(layer_index, activation_name)
-        self.model.layout = self.current_layout
-        self.layout_string_var.set(self.current_layout.to_compact_spec())
-        if self._app_mode() == "playground":
-            self._initialize_playground_state()
-        else:
-            self._refresh_views()
+        updated_layout = layout.replace_layer(layer_index, activation_name)
+        self._sync_layout_editor_state(updated_layout, update_preview=True)
 
     def _apply_neuron_setting(self) -> None:
         """Setzt die Aktivierung eines einzelnen Hidden-Neurons."""
 
-        if self.current_layout is None or self.model is None:
+        layout = self._editable_layout()
+        if layout is None:
             return
         layer_index = int(self.neuron_layer_var.get().replace("L", "")) - 1
         neuron_index = int(self.neuron_index_var.get())
         activation_name = self.neuron_activation_var.get()
-        self.current_layout = self.current_layout.replace_neuron(layer_index, neuron_index, activation_name)
-        self.model.layout = self.current_layout
         self.selected_hidden = (layer_index, neuron_index)
-        self.layout_string_var.set(self.current_layout.to_compact_spec())
-        if self._app_mode() == "playground":
-            self._initialize_playground_state()
-        else:
-            self._refresh_views()
+        updated_layout = layout.replace_neuron(layer_index, neuron_index, activation_name)
+        self._sync_layout_editor_state(updated_layout, update_preview=True)
 
     def _cycle_selected_neuron(self) -> None:
         """Schaltet das aktuell gewaehlte Neuron zur naechsten Aktivierung weiter."""
 
-        if self.current_layout is None or self.model is None:
+        layout = self._editable_layout()
+        if layout is None:
             return
         layer_index = int(self.neuron_layer_var.get().replace("L", "")) - 1
         neuron_index = int(self.neuron_index_var.get())
-        self.current_layout = self.current_layout.cycle_neuron(layer_index, neuron_index)
-        self.model.layout = self.current_layout
         self.selected_hidden = (layer_index, neuron_index)
-        self.layout_string_var.set(self.current_layout.to_compact_spec())
-        self.neuron_activation_var.set(self.current_layout.layers[layer_index][neuron_index])
-        if self._app_mode() == "playground":
-            self._initialize_playground_state()
-        else:
-            self._refresh_views()
+        updated_layout = layout.cycle_neuron(layer_index, neuron_index)
+        self._sync_layout_editor_state(updated_layout, update_preview=True)
+        self.neuron_activation_var.set(updated_layout.layers[layer_index][neuron_index])
 
     def _select_from_controls(self) -> None:
         """Uebernimmt die aktuelle Dropdown-Auswahl als selektiertes Neuron."""
 
-        if self.current_layout is None:
+        layout = self._editable_layout()
+        if layout is None:
             return
         layer_index = int(self.neuron_layer_var.get().replace("L", "")) - 1
         neuron_index = int(self.neuron_index_var.get())
         self.selected_hidden = (layer_index, neuron_index)
-        self.neuron_activation_var.set(self.current_layout.layers[layer_index][neuron_index])
+        self.neuron_activation_var.set(layout.layers[layer_index][neuron_index])
         self._refresh_views()
 
     def _on_benchmark_changed(self, _event=None) -> None:
@@ -3060,6 +4858,9 @@ class PlaygroundGUI:
         self._apply_benchmark_defaults()
         if self.benchmark_var.get() == "test_activation":
             self.use_custom_sample_var.set(True)
+        if self._app_mode() == "experiment_builder":
+            self._load_experiment(reinitialize_model=True)
+            self._update_builder_layout_options()
 
     def _on_neuron_layer_changed(self, _event=None) -> None:
         """Passt die Neuron-Auswahl an den gewaehlten Layer an."""
@@ -3231,8 +5032,685 @@ class PlaygroundGUI:
         }
         return TrainingResult(history=merged_history, test_metrics=new_result.test_metrics)
 
+    def _effective_builder_seeds(self) -> tuple[int, ...]:
+        """Liefert die aktuelle Seed-Liste aus dem Builder."""
+
+        if self.builder_seed_strategy_var.get() == "explicit_list":
+            tokens = [
+                token.strip()
+                for token in self.builder_seed_list_var.get().replace(";", ",").split(",")
+                if token.strip()
+            ]
+            if not tokens:
+                raise ValueError(
+                    "Bitte mindestens einen Seed angeben."
+                    if not self._is_english()
+                    else "Please provide at least one seed."
+                )
+            return tuple(int(token) for token in tokens)
+
+        count = int(self.builder_seed_count_var.get())
+        start = int(self.builder_seed_start_var.get())
+        if count <= 0:
+            raise ValueError(
+                "Die Anzahl der Seeds muss positiv sein."
+                if not self._is_english()
+                else "Seed count must be positive."
+            )
+        return tuple(start + offset for offset in range(count))
+
+    def _builder_search_value_type(self, parameter_name: str) -> str:
+        """Liefert den Datentyp eines Builder-Suchparameters."""
+
+        if parameter_name in {"batch_size", "epochs", "candidate_epochs"}:
+            return "int"
+        if parameter_name == "cooling_schedule":
+            return "str"
+        return "float"
+
+    def _builder_current_parameter_value(self, parameter_name: str) -> str:
+        """Liefert den aktuell sichtbaren Basiswert fuer einen Builder-Parameter."""
+
+        value_map = {
+            "learning_rate": self.lr_var.get(),
+            "batch_size": str(self.batch_size_var.get()),
+            "weight_scale": self.weight_scale_var.get(),
+            "epochs": str(self.epochs_var.get()),
+            "candidate_epochs": str(self.candidate_epochs_var.get()),
+            "start_temperature": self.start_temperature_var.get(),
+            "cooling_schedule": self.cooling_schedule_var.get(),
+            "cooling_parameter": self.cooling_parameter_var.get(),
+        }
+        return value_map[parameter_name]
+
+    def _normalized_experiment_id(self, raw_name: str, benchmark: str, run_mode: str) -> str:
+        """Leitet einen dateisicheren Experiment-Identifier aus einem Builder-Namen ab."""
+
+        normalized = "".join(
+            character.lower() if character.isalnum() else "_"
+            for character in raw_name
+        ).strip("_")
+        return normalized or f"{benchmark}_{run_mode}"
+
+    def _parse_builder_search_value_definition(self, parameter_name: str) -> SearchValueDefinition:
+        """Parst eine Builder-Zeile zu einer diskreten SearchValueDefinition."""
+
+        kind = self.builder_tuning_mode_vars[parameter_name].get()
+        value_type = self._builder_search_value_type(parameter_name)
+        raw_text = self.builder_tuning_value_vars[parameter_name].get().strip()
+        default_value = self._builder_current_parameter_value(parameter_name)
+
+        if kind == "fixed":
+            value_text = raw_text or default_value
+            return SearchValueDefinition(
+                parameter_name=parameter_name,
+                kind="fixed",
+                value_type=value_type,
+                fixed_value=value_text,
+            )
+
+        if kind == "list":
+            parts = [
+                part.strip()
+                for part in raw_text.replace(";", ",").split(",")
+                if part.strip()
+            ]
+            if not parts:
+                parts = [default_value]
+            return SearchValueDefinition(
+                parameter_name=parameter_name,
+                kind="list",
+                value_type=value_type,
+                values=tuple(parts),
+            )
+
+        if value_type == "str":
+            raise ValueError(
+                (
+                    f"{parameter_name}: Bereich ist fuer Textwerte nicht erlaubt."
+                    if not self._is_english()
+                    else f"{parameter_name}: range is not allowed for string values."
+                )
+            )
+        range_parts = [part.strip() for part in raw_text.split(":") if part.strip()]
+        if len(range_parts) != 3:
+            raise ValueError(
+                (
+                    f"{parameter_name}: Bereich erwartet start:stop:step."
+                    if not self._is_english()
+                    else f"{parameter_name}: range expects start:stop:step."
+                )
+            )
+        return SearchValueDefinition(
+            parameter_name=parameter_name,
+            kind="range",
+            value_type=value_type,
+            range_start=float(range_parts[0]),
+            range_stop=float(range_parts[1]),
+            range_step=float(range_parts[2]),
+        )
+
+    def _build_builder_search_space(self, run_mode: str) -> SearchSpaceDefinition:
+        """Erzeugt den diskreten Suchraum aus dem aktuellen Builder-Zustand."""
+
+        search_type = self.builder_search_type_var.get()
+        if search_type == "none":
+            return SearchSpaceDefinition(search_type="none")
+
+        if run_mode == "manual_training":
+            relevant_parameters = ("learning_rate", "batch_size", "weight_scale", "epochs")
+        else:
+            relevant_parameters = (
+                "learning_rate",
+                "batch_size",
+                "weight_scale",
+                "candidate_epochs",
+                "start_temperature",
+                "cooling_schedule",
+                "cooling_parameter",
+            )
+
+        value_definitions = tuple(
+            self._parse_builder_search_value_definition(parameter_name)
+            for parameter_name in relevant_parameters
+        )
+        return SearchSpaceDefinition(
+            search_type=search_type,
+            value_definitions=value_definitions,
+            random_samples=int(self.builder_random_samples_var.get()),
+            random_state=int(self.builder_random_seed_var.get()),
+        )
+
+    def _build_experiment_definition(self) -> ExperimentDefinition:
+        """Erzeugt eine Builder-Definition aus den GUI-Werten."""
+
+        benchmark = self.benchmark_var.get()
+        hidden_sizes = self._current_hidden_sizes()
+        if self._app_mode() == "experiment_builder" and self.builder_config_layout is not None:
+            layout = self.builder_config_layout
+        else:
+            layout = parse_layout_spec(self.layout_string_var.get(), hidden_sizes)
+        self.layout_string_var.set(layout.to_compact_spec())
+        run_mode = self.builder_run_mode_var.get()
+
+        experiment_name = self.builder_experiment_name_var.get().strip()
+        if not experiment_name:
+            experiment_name = f"{benchmark}_{run_mode}"
+            self.builder_experiment_name_var.set(experiment_name)
+        experiment_id = self._normalized_experiment_id(experiment_name, benchmark, run_mode)
+
+        return ExperimentDefinition(
+            experiment_id=experiment_id,
+            benchmark=benchmark,
+            hidden_sizes=hidden_sizes,
+            layout_spec=layout.to_compact_spec(),
+            run_mode=run_mode,
+            seeds=self._effective_builder_seeds(),
+            primary_metric=self.builder_primary_metric_var.get(),
+            language=self._language(),
+            save_json=bool(self.builder_save_json_var.get()),
+            output_dir=self.builder_output_dir_var.get().strip() or str(OUTPUT_DIR / DEFAULT_EXPERIMENT_OUTPUT_SUBDIR),
+            shuffle=bool(self.playground_shuffle_var.get()),
+            learning_rate=float(self.lr_var.get()),
+            batch_size=int(self.batch_size_var.get()),
+            weight_scale=float(self.weight_scale_var.get()),
+            epochs=int(self.epochs_var.get()),
+            objective_name=self.objective_var.get(),
+            candidate_epochs=int(self.candidate_epochs_var.get()),
+            neighborhood_operations=tuple(
+                operation
+                for operation, variable in self.playground_neighbor_vars.items()
+                if variable.get()
+            ),
+            start_temperature=float(self.start_temperature_var.get()),
+            cooling_schedule=self.cooling_schedule_var.get(),
+            cooling_parameter=float(self.cooling_parameter_var.get()),
+            iterations_per_temperature=int(self.iterations_per_temperature_var.get()),
+            max_steps=int(self.max_steps_var.get()),
+            min_temperature=float(self.min_temperature_var.get()),
+            search_space=self._build_builder_search_space(run_mode),
+        )
+
+    def _validate_builder_experiment(self) -> None:
+        """Validiert den aktuellen Builder-Zustand und zeigt die geplante Run-Anzahl."""
+
+        try:
+            definition = self._build_experiment_definition()
+            expanded_configs = expand_search_space(definition.search_space)
+            run_count = len(expanded_configs) * len(definition.seeds)
+            self.builder_status_var.set(self.t("builder_validation_ok", run_count=run_count))
+            messagebox.showinfo(
+                self.t("info_dialog_title"),
+                self.t("builder_validation_ok", run_count=run_count),
+            )
+        except Exception as exc:
+            self.builder_status_var.set(str(exc))
+            messagebox.showerror(self.t("builder_validation_error_title"), str(exc))
+
+    def _run_builder_experiment(self) -> None:
+        """Fuehrt das aktuelle Builder-Experiment aus und uebernimmt die Resultate."""
+
+        try:
+            definition = self._build_experiment_definition()
+            running_text = (
+                "Experiment wird ausgefuehrt ..."
+                if not self._is_english()
+                else "Executing experiment ..."
+            )
+            self.builder_status_var.set(running_text)
+            self.root.update_idletasks()
+            result = self.builder_runner.run_experiment(definition)
+            self.builder_last_execution = result
+
+            if result["output_path"] is not None:
+                self.builder_load_path_var.set(str(result["output_path"]))
+                self.builder_loaded_payload = load_experiment_results(result["output_path"])
+            else:
+                run_results = result["run_results"]
+                self.builder_loaded_payload = {
+                    "manifest": {
+                        "experiment_id": definition.experiment_id,
+                        "benchmark": definition.benchmark,
+                        "run_mode": definition.run_mode,
+                        "search_type": definition.search_space.search_type,
+                        "primary_metric": definition.primary_metric,
+                        "created_at": definition.created_at,
+                        "definition": definition.to_dict(),
+                        "summary_file": "summary.json",
+                        "run_files": [
+                            f"runs/{run_result.run_definition.run_id}.json"
+                            for run_result in run_results
+                        ],
+                    },
+                    "summary": result["summary"].to_dict(),
+                    "runs": [run_result.to_dict() for run_result in run_results],
+                    "experiment_dir": str(definition.output_path),
+                }
+
+            active_runs = self.builder_loaded_payload.get("runs", []) if self.builder_loaded_payload else []
+            if active_runs:
+                self.builder_selected_run_id = active_runs[0]["run_definition"]["run_id"]
+                self.builder_selected_config_id = active_runs[0]["run_definition"]["config_id"]
+            finished_text = (
+                f"Experiment abgeschlossen: {len(active_runs)} Runs."
+                if not self._is_english()
+                else f"Experiment finished: {len(active_runs)} runs."
+            )
+            if result["output_path"] is not None:
+                finished_text += (
+                    f" Gespeichert unter {result['output_path']}."
+                    if not self._is_english()
+                    else f" Stored in {result['output_path']}."
+                )
+            self.builder_status_var.set(finished_text)
+            self._refresh_views()
+        except Exception as exc:
+            self.builder_status_var.set(str(exc))
+            messagebox.showerror(self.t("builder_run_error_title"), str(exc))
+
+    def _load_builder_results(self) -> None:
+        """Laedt gespeicherte Experiment-Builder-Ergebnisse von Platte."""
+
+        try:
+            load_path = self.builder_load_path_var.get().strip()
+            if not load_path:
+                experiment_name = self.builder_experiment_name_var.get().strip()
+                if not experiment_name:
+                    raise ValueError(
+                        "Bitte einen Pfad oder einen Experiment-Namen angeben."
+                        if not self._is_english()
+                        else "Please provide a path or an experiment name."
+                    )
+                load_path = str(
+                    Path(self.builder_output_dir_var.get().strip() or str(OUTPUT_DIR / DEFAULT_EXPERIMENT_OUTPUT_SUBDIR))
+                    / self._normalized_experiment_id(
+                        experiment_name,
+                        self.benchmark_var.get(),
+                        self.builder_run_mode_var.get(),
+                    )
+                )
+                self.builder_load_path_var.set(load_path)
+
+            self.builder_loaded_payload = load_experiment_results(load_path)
+            active_runs = self.builder_loaded_payload.get("runs", [])
+            if active_runs:
+                self.builder_selected_run_id = active_runs[0]["run_definition"]["run_id"]
+                self.builder_selected_config_id = active_runs[0]["run_definition"]["config_id"]
+            self.builder_status_var.set(
+                (
+                    f"Ergebnisse geladen aus {self.builder_loaded_payload['experiment_dir']}."
+                    if not self._is_english()
+                    else f"Loaded results from {self.builder_loaded_payload['experiment_dir']}."
+                )
+            )
+            self._refresh_views()
+        except Exception as exc:
+            self.builder_status_var.set(str(exc))
+            messagebox.showerror(self.t("builder_load_error_title"), str(exc))
+
+    def _active_builder_payload(self) -> dict[str, Any] | None:
+        """Liefert das aktive Builder-Ergebnis fuer Analyse und Plotting."""
+
+        return self.builder_loaded_payload
+
+    def _selected_builder_run_payload(self) -> dict[str, Any] | None:
+        """Liefert den aktuell selektierten Run im Builder."""
+
+        payload = self._active_builder_payload()
+        if payload is None:
+            return None
+        runs = payload.get("runs", [])
+        if not runs:
+            return None
+        if self.builder_selected_run_id is None:
+            return runs[0]
+        return next(
+            (
+                run_payload
+                for run_payload in runs
+                if run_payload["run_definition"]["run_id"] == self.builder_selected_run_id
+            ),
+            runs[0],
+        )
+
+    def _refresh_experiment_builder_views(self) -> None:
+        """Aktualisiert alle Builder-Ansichten auf Basis des aktiven Payloads."""
+
+        self._update_builder_seed_preview()
+        self._update_builder_layout_options()
+        self._sync_builder_preview_state()
+        self._update_builder_summary()
+        self._update_builder_run_tree()
+        self._update_builder_analysis_text()
+        self._update_builder_detail_text()
+        self._update_builder_plot()
+        if self.model is not None and self.dataset is not None and self.current_layout is not None:
+            self._update_prediction_summary()
+            self._update_metrics_summary()
+            self._update_neuron_detail()
+            self._redraw_network()
+
+    def _update_builder_summary(self) -> None:
+        """Aktualisiert Kurz- und Langzusammenfassung des Builder-Modus."""
+
+        payload = self._active_builder_payload()
+        if payload is None:
+            self.builder_summary_var.set(self.t("builder_no_results"))
+            if self.builder_summary_text is not None:
+                self._set_readonly_text_widget(self.builder_summary_text, self.t("builder_no_results"))
+            return
+
+        manifest = payload["manifest"]
+        summary = payload["summary"]
+        experiment_dir = payload.get("experiment_dir", "")
+        self.builder_summary_var.set(
+            (
+                f"Experiment: {manifest['experiment_id']} | Benchmark: {manifest['benchmark']} | "
+                f"Modus: {manifest['run_mode']} | Search: {manifest['search_type']} | "
+                f"Konfigurationen: {summary['configuration_count']} | Runs: {summary['number_of_runs']} | "
+                f"Seeds: {summary['number_of_seeds']}"
+            )
+            if not self._is_english()
+            else (
+                f"Experiment: {manifest['experiment_id']} | Benchmark: {manifest['benchmark']} | "
+                f"Mode: {manifest['run_mode']} | Search: {manifest['search_type']} | "
+                f"Configurations: {summary['configuration_count']} | Runs: {summary['number_of_runs']} | "
+                f"Seeds: {summary['number_of_seeds']}"
+            )
+        )
+
+        ranking_lines = []
+        for rank, entry in enumerate(summary.get("ranking", [])[:8], start=1):
+            ranking_lines.append(
+                (
+                    f"{rank:02d}. {entry['config_id']} | Score={entry['ranking_score']:.6f} | "
+                    f"val_acc={entry.get('mean_val_accuracy', 0.0):.4f} | "
+                    f"val_loss={entry.get('mean_val_loss', 0.0):.4f}"
+                )
+            )
+        overview_lines = [
+            "Experiment Builder Summary" if self._is_english() else "Experiment-Builder-Zusammenfassung",
+            "=" * (25 if self._is_english() else 34),
+            "",
+            f"experiment_id: {manifest['experiment_id']}",
+            f"benchmark:     {manifest['benchmark']}",
+            f"run_mode:      {manifest['run_mode']}",
+            f"search_type:   {manifest['search_type']}",
+            f"primary_metric:{summary['primary_metric']}",
+            f"runs:          {summary['number_of_runs']}",
+            f"seeds:         {summary['number_of_seeds']}",
+            f"configs:       {summary['configuration_count']}",
+            f"directory:     {experiment_dir}",
+            "",
+            "Top ranking" if self._is_english() else "Top-Ranking",
+            "-----------" if self._is_english() else "-----------",
+            *ranking_lines,
+        ]
+        if self.builder_summary_text is not None:
+            self._set_readonly_text_widget(self.builder_summary_text, "\n".join(overview_lines))
+
+    def _update_builder_run_tree(self) -> None:
+        """Fuellt die Run-Liste des Builders."""
+
+        if self.builder_run_tree is None:
+            return
+        self.builder_run_tree.delete(*self.builder_run_tree.get_children())
+        payload = self._active_builder_payload()
+        if payload is None:
+            return
+        for run_payload in payload.get("runs", []):
+            run_definition = run_payload["run_definition"]
+            metrics = run_payload["metrics"]
+            run_id = run_definition["run_id"]
+            config_id = run_definition["config_id"]
+            values = (
+                run_id,
+                config_id,
+                run_definition["seed"],
+                f"{metrics.get('val_accuracy', 0.0):.4f}",
+                f"{metrics.get('val_loss', 0.0):.4f}",
+                f"{metrics.get('test_accuracy', 0.0):.4f}",
+                run_definition["run_mode"],
+            )
+            self.builder_run_tree.insert("", tk.END, iid=run_id, values=values)
+        if self.builder_selected_run_id and self.builder_selected_run_id in self.builder_run_tree.get_children():
+            self.builder_run_tree.selection_set(self.builder_selected_run_id)
+        elif self.builder_run_tree.get_children():
+            first_item = self.builder_run_tree.get_children()[0]
+            self.builder_run_tree.selection_set(first_item)
+
+    def _update_builder_analysis_text(self) -> None:
+        """Aktualisiert die Aggregationsansicht des Builders."""
+
+        if self.builder_analysis_text is None:
+            return
+        payload = self._active_builder_payload()
+        if payload is None:
+            self._set_readonly_text_widget(self.builder_analysis_text, self.t("builder_no_results"))
+            return
+
+        summary = payload["summary"]
+        lines = [
+            "Multi-Seed Analysis" if self._is_english() else "Multi-Seed-Analyse",
+            "===================" if self._is_english() else "==================",
+            "",
+            (
+                "Ranking uses validation metrics only."
+                if self._is_english()
+                else "Das Ranking nutzt nur Validation-Metriken."
+            ),
+            "",
+        ]
+        for aggregated in summary.get("aggregated_metrics", []):
+            lines.extend(
+                [
+                    f"{aggregated['config_id']} | ranking_score={aggregated['ranking_score']:.6f}",
+                    (
+                        f"  mean val_acc={aggregated['mean_metrics'].get('val_accuracy', 0.0):.4f} "
+                        f"(std {aggregated['std_metrics'].get('val_accuracy', 0.0):.4f})"
+                    ),
+                    (
+                        f"  mean val_loss={aggregated['mean_metrics'].get('val_loss', 0.0):.4f} "
+                        f"(std {aggregated['std_metrics'].get('val_loss', 0.0):.4f})"
+                    ),
+                    (
+                        f"  mean test_acc={aggregated['mean_metrics'].get('test_accuracy', 0.0):.4f} "
+                        f"(std {aggregated['std_metrics'].get('test_accuracy', 0.0):.4f})"
+                    ),
+                    (
+                        f"  best seed={aggregated['best_seed']} | worst seed={aggregated['worst_seed']}"
+                    ),
+                ]
+            )
+            if "best_objective" in aggregated["mean_metrics"]:
+                lines.append(
+                    f"  mean best_objective={aggregated['mean_metrics'].get('best_objective', 0.0):.6f}"
+                )
+                lines.append(
+                    f"  mean acceptance_rate={aggregated['mean_metrics'].get('acceptance_rate', 0.0):.4f}"
+                )
+            if aggregated.get("config_values"):
+                lines.append(f"  config_values={aggregated['config_values']}")
+            lines.append("")
+        self._set_readonly_text_widget(self.builder_analysis_text, "\n".join(lines))
+
+    def _update_builder_detail_text(self) -> None:
+        """Aktualisiert die Detailansicht fuer einen selektierten Builder-Run."""
+
+        if self.builder_detail_text is None:
+            return
+        run_payload = self._selected_builder_run_payload()
+        if run_payload is None:
+            self._set_readonly_text_widget(self.builder_detail_text, self.t("builder_no_results"))
+            return
+
+        run_definition = run_payload["run_definition"]
+        metrics = run_payload["metrics"]
+        extra = run_payload.get("extra", {})
+        effective_parameters = extra.get("effective_parameters", {})
+        lines = [
+            "Per-Seed Detail" if self._is_english() else "Per-Seed-Detail",
+            "===============" if self._is_english() else "===============",
+            "",
+            f"run_id:      {run_definition['run_id']}",
+            f"config_id:   {run_definition['config_id']}",
+            f"seed:        {run_definition['seed']}",
+            f"benchmark:   {run_definition['benchmark']}",
+            f"run_mode:    {run_definition['run_mode']}",
+            f"layout_spec: {run_payload['layout_spec']}",
+            (
+                f"search_overrides: {run_definition['config_values']}"
+                if self._is_english()
+                else f"search_overrides: {run_definition['config_values']}"
+            ),
+            "",
+            "Metrics" if self._is_english() else "Metriken",
+            "-------" if self._is_english() else "--------",
+        ]
+        for metric_name, metric_value in metrics.items():
+            lines.append(f"{metric_name}: {metric_value:.6f}")
+
+        if effective_parameters:
+            lines.extend(
+                [
+                    "",
+                    "Effective parameters" if self._is_english() else "Effektive Parameter",
+                    "-------------------" if self._is_english() else "-------------------",
+                ]
+            )
+            for parameter_name in sorted(effective_parameters):
+                lines.append(f"{parameter_name}: {effective_parameters[parameter_name]}")
+
+        history = run_payload.get("history", {})
+        if history:
+            lines.extend(
+                [
+                    "",
+                    "History lengths" if self._is_english() else "History-Laengen",
+                    "---------------" if self._is_english() else "---------------",
+                ]
+            )
+            for key, values in history.items():
+                lines.append(f"{key}: {len(values)}")
+
+        if run_definition["run_mode"] == "simulated_annealing":
+            start_layout_spec = extra.get("start_layout_spec")
+            best_layout_spec = extra.get("best_layout_spec")
+            end_layout_spec = extra.get("end_layout_spec")
+            if start_layout_spec and best_layout_spec:
+                try:
+                    hidden_sizes = tuple(int(size) for size in run_definition["hidden_sizes"])
+                    start_layout = parse_layout_spec(start_layout_spec, hidden_sizes)
+                    best_layout = parse_layout_spec(best_layout_spec, hidden_sizes)
+                    diff_text = render_layout_diff(start_layout, best_layout)
+                except Exception:
+                    diff_text = (
+                        "Layout-Diff konnte nicht rekonstruiert werden."
+                        if not self._is_english()
+                        else "Layout diff could not be reconstructed."
+                    )
+                lines.extend(
+                    [
+                        "",
+                        "Simulated Annealing" if self._is_english() else "Simulated Annealing",
+                        "-------------------",
+                        f"start_layout: {start_layout_spec}",
+                        f"best_layout:  {best_layout_spec}",
+                        f"end_layout:   {end_layout_spec}",
+                        f"acceptance_rate: {metrics.get('acceptance_rate', 0.0):.4f}",
+                        f"stop_reasons: {extra.get('stop_reasons', [])}",
+                        "",
+                        "Layout diff" if self._is_english() else "Layout-Diff",
+                        "-----------" if self._is_english() else "-----------",
+                        diff_text,
+                    ]
+                )
+                annealing_history = extra.get("annealing_history", [])
+                if annealing_history:
+                    lines.extend(
+                        [
+                            "",
+                            "Last SA steps" if self._is_english() else "Letzte SA-Schritte",
+                            "-------------" if self._is_english() else "------------------",
+                        ]
+                    )
+                    for entry in annealing_history[-5:]:
+                        lines.append(
+                            f"step {entry['step_index']}: T={entry['temperature']:.4f}, "
+                            f"delta={entry['delta']:+.6f}, accepted={entry['accepted']}, "
+                            f"best_score={entry['best_score_after_step']:.6f}"
+                        )
+
+        self._set_readonly_text_widget(self.builder_detail_text, "\n".join(lines))
+
+    def _update_builder_plot(self) -> None:
+        """Aktualisiert die Builder-Plotflaeche."""
+
+        if self.builder_plot_container is None:
+            return
+        for child in self.builder_plot_container.winfo_children():
+            child.destroy()
+        payload = self._active_builder_payload()
+        if payload is None:
+            ttk.Label(
+                self.builder_plot_container,
+                text=self.t("builder_no_results"),
+                style="Hint.TLabel",
+                justify=tk.LEFT,
+            ).grid(row=0, column=0, sticky="nsew")
+            return
+        self.builder_plot_figure = build_experiment_overview_figure(
+            summary_payload=payload["summary"],
+            run_payloads=payload["runs"],
+            selected_config_id=self.builder_selected_config_id,
+            selected_run_id=self.builder_selected_run_id,
+        )
+        self.builder_plot_canvas_widget = FigureCanvasTkAgg(
+            self.builder_plot_figure,
+            master=self.builder_plot_container,
+        )
+        self.builder_plot_canvas_widget.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+        self.builder_plot_canvas_widget.draw_idle()
+
+    def _on_builder_run_selected(self, _event=None) -> None:
+        """Synchronisiert Auswahl aus der Builder-Run-Liste."""
+
+        if self.builder_run_tree is None:
+            return
+        selection = self.builder_run_tree.selection()
+        if not selection:
+            return
+        selected_item = selection[0]
+        self.builder_selected_run_id = selected_item
+        values = self.builder_run_tree.item(selected_item, "values")
+        if len(values) >= 2:
+            self.builder_selected_config_id = str(values[1])
+        self._update_builder_layout_options()
+        self._sync_builder_preview_state()
+        self._update_builder_detail_text()
+        self._update_builder_plot()
+        if self.model is not None and self.dataset is not None and self.current_layout is not None:
+            self._update_prediction_summary()
+            self._update_metrics_summary()
+            self._update_neuron_detail()
+            self._redraw_network()
+
+    def _set_readonly_text_widget(self, widget: ScrolledText, text: str) -> None:
+        """Schreibt Text in ein schreibgeschuetztes Text-Widget."""
+
+        widget.configure(state=tk.NORMAL)
+        widget.delete("1.0", tk.END)
+        widget.insert("1.0", text)
+        widget.configure(state=tk.DISABLED)
+
     def _refresh_views(self) -> None:
         """Aktualisiert alle abhaengigen GUI-Bereiche."""
+
+        if self._app_mode() == "experiment_builder":
+            self._refresh_guidance()
+            self._refresh_experiment_builder_views()
+            self._update_help_text()
+            return
 
         self._refresh_guidance()
         self._refresh_sample_tab()
@@ -3251,6 +5729,38 @@ class PlaygroundGUI:
 
         benchmark = self.benchmark_var.get()
         selected_layer, selected_neuron = self.selected_hidden
+        if self._app_mode() == "experiment_builder":
+            if self._is_english():
+                self.workflow_summary_var.set(
+                    "1. Define benchmark, layout, and run mode.\n"
+                    "2. Choose a seed strategy and inspect the effective seed list.\n"
+                    "3. Set training or annealing parameters.\n"
+                    "4. Optional: turn the setup into a grid or random search.\n"
+                    "5. Validate the experiment and run it.\n"
+                    "6. Inspect ranking, multi-seed aggregation, and per-seed details.\n"
+                    "7. In expert mode, edit the builder start layout directly per layer or neuron."
+                )
+                self.context_hint_var.set(
+                    "Experiment Builder is focused on reproducible runs, not on one visible sample. "
+                    "Validation metrics drive ranking, while test metrics remain a final evaluation. "
+                    "The layout editor changes the next start layout, while 'Current Layouts' is only a preview list."
+                )
+            else:
+                self.workflow_summary_var.set(
+                    "1. Definiere Benchmark, Layout und Run-Modus.\n"
+                    "2. Waehle eine Seed-Strategie und pruefe die effektive Seed-Liste.\n"
+                    "3. Setze Trainings- oder Annealing-Parameter.\n"
+                    "4. Optional: mache daraus eine Grid- oder Random-Search.\n"
+                    "5. Validiere das Experiment und fuehre es aus.\n"
+                    "6. Analysiere Ranking, Multi-Seed-Aggregation und Per-Seed-Details.\n"
+                    "7. Bearbeite im Expertenmodus das Builder-Startlayout direkt pro Layer oder Neuron."
+                )
+                self.context_hint_var.set(
+                    "Der Experiment Builder fokussiert reproduzierbare Runs statt eines einzelnen sichtbaren Samples. "
+                    "Das Ranking basiert auf Validation, waehrend Testmetriken fuer die finale Einordnung bleiben. "
+                    "Der Layout-Editor veraendert das naechste Startlayout, waehrend 'Aktuelle Layouts' nur eine Vorschau ist."
+                )
+            return
         if self._app_mode() == "playground":
             if self._is_english():
                 self.workflow_summary_var.set(
@@ -3742,7 +6252,10 @@ class PlaygroundGUI:
     def _set_detail_text(self, text: str) -> None:
         """Schreibt Text in die schreibgeschuetzte Detailansicht."""
 
-        for text_widget in (self.detail_text, self.live_detail_text):
+        for widget_name in ("detail_text", "live_detail_text"):
+            text_widget = getattr(self, widget_name, None)
+            if not self._widget_exists(text_widget):
+                continue
             text_widget.configure(state=tk.NORMAL)
             text_widget.delete("1.0", tk.END)
             text_widget.insert("1.0", text)
@@ -4770,6 +7283,136 @@ class PlaygroundGUI:
 
         benchmark = self.benchmark_var.get()
         is_playground = self._app_mode() == "playground"
+        if self._app_mode() == "experiment_builder":
+            if self._is_english():
+                help_lines = [
+                    "Experiment Builder Help",
+                    "=======================",
+                    "",
+                    "What is this mode for?",
+                    "----------------------",
+                    "This mode is not focused on one visible sample.",
+                    "It is focused on reproducible experiments, multiple seeds, search spaces, and later re-analysis.",
+                    "",
+                    "Core concepts",
+                    "-------------",
+                    "Experiment = one full definition consisting of benchmark, layout, seeds, mode, and optional search space.",
+                    "Run = one concrete execution for exactly one configuration and one seed.",
+                    "Configuration = one concrete parameter setting produced from the search space.",
+                    "Seed = controls randomness for initialization, data split, and reproducible comparison.",
+                    "Start layout = the layout configured on the left for the next run.",
+                    "Current layouts = a preview list for setup, start, best, or end layouts from a selected run.",
+                    "",
+                    "Recommended workflow",
+                    "--------------------",
+                    "1. Choose benchmark, hidden layers, layout, and run mode.",
+                    "2. Choose seed strategy and check the effective seed list.",
+                    "3. Set training or annealing parameters.",
+                    "4. Optional: enable grid search or random search.",
+                    "5. Validate the experiment before running it.",
+                    "6. Use the run list, multi-seed analysis, and per-seed detail tabs after execution.",
+                    "",
+                    "Why validation instead of test?",
+                    "-------------------------------",
+                    "Validation is used to compare configurations because test should remain a final evaluation set.",
+                    "If you rank by test, you leak information from the final evaluation into model selection.",
+                    "",
+                    "Search types",
+                    "------------",
+                    "No Search: run exactly one configuration across multiple seeds.",
+                    "Grid Search: test all discrete combinations from the builder search space.",
+                    "Random Search: reproducibly sample only part of the same discrete search space.",
+                    "",
+                    "Simulated annealing inside the builder",
+                    "--------------------------------------",
+                    "In SA mode, each run optimizes the activation layout instead of only training one fixed layout.",
+                    "The stored results include the start layout, best layout, end layout, acceptance rate, and step history.",
+                    "The layout editor on the left defines the start layout of the next SA run. It does not change old stored runs.",
+                    "",
+                    "Practical parameter hints",
+                    "-------------------------",
+                    *self._parameter_help_lines(),
+                    "",
+                    "SA start recommendations",
+                    "------------------------",
+                    *self._sa_start_recommendation_lines(),
+                    "",
+                    "Suggested experiment recipes",
+                    "----------------------------",
+                    *self._experiment_recipe_lines(),
+                    "",
+                    "Result files",
+                    "------------",
+                    "Stored experiments write one manifest, one summary, and one JSON file per run.",
+                    "This makes later loading and analysis possible without rerunning everything.",
+                ]
+            else:
+                help_lines = [
+                    "Lernhilfe fuer den Experiment Builder",
+                    "=====================================",
+                    "",
+                    "Wofuer ist dieser Modus gedacht?",
+                    "--------------------------------",
+                    "Dieser Modus fokussiert nicht ein einzelnes sichtbares Sample.",
+                    "Er fokussiert reproduzierbare Experimente, mehrere Seeds, Suchraeume und spaetere Wiederanalyse.",
+                    "",
+                    "Wichtige Begriffe",
+                    "-----------------",
+                    "Experiment = eine vollstaendige Definition aus Benchmark, Layout, Seeds, Modus und optionalem Suchraum.",
+                    "Run = eine konkrete Ausfuehrung fuer genau eine Konfiguration und genau einen Seed.",
+                    "Konfiguration = eine konkrete Parameterbelegung aus dem Suchraum.",
+                    "Seed = steuert Zufall fuer Initialisierung, Datensplit und reproduzierbare Vergleiche.",
+                    "Startlayout = das links konfigurierte Layout fuer den naechsten Run.",
+                    "Aktuelle Layouts = reine Vorschau-Liste fuer Setup-, Start-, Best- oder Endlayout eines selektierten Runs.",
+                    "",
+                    "Empfohlener Ablauf",
+                    "------------------",
+                    "1. Waehle Benchmark, Hidden-Layer, Layout und Run-Modus.",
+                    "2. Waehle die Seed-Strategie und pruefe die effektive Seed-Liste.",
+                    "3. Setze Trainings- oder Annealing-Parameter.",
+                    "4. Optional: aktiviere Grid Search oder Random Search.",
+                    "5. Validiere das Experiment vor dem Start.",
+                    "6. Nutze danach Run-Liste, Multi-Seed-Analyse und Per-Seed-Details.",
+                    "",
+                    "Warum Validation statt Test?",
+                    "----------------------------",
+                    "Validation wird fuer den Vergleich von Konfigurationen genutzt, weil Test eine finale Bewertungsmenge bleiben soll.",
+                    "Wenn nach Test gerankt wird, fliesst die Endbewertung in die Modellwahl ein.",
+                    "",
+                    "Search-Typen",
+                    "------------",
+                    "Keine Suche: genau eine Konfiguration ueber mehrere Seeds ausfuehren.",
+                    "Grid Search: alle diskreten Kombinationen aus dem Builder-Suchraum testen.",
+                    "Random Search: reproduzierbar nur einen Teil desselben diskreten Suchraums sampeln.",
+                    "",
+                    "Simulated Annealing im Builder",
+                    "------------------------------",
+                    "Im SA-Modus optimiert jeder Run das Aktivierungs-Layout statt nur ein fixes Layout zu trainieren.",
+                    "Die gespeicherten Ergebnisse enthalten Startlayout, Bestlayout, Endlayout, Akzeptanzrate und Schrittverlauf.",
+                    "Der Layout-Editor links definiert das Startlayout des naechsten SA-Runs. Alte gespeicherte Runs werden dadurch nicht veraendert.",
+                    "",
+                    "Praktische Parameterhinweise",
+                    "----------------------------",
+                    *self._parameter_help_lines(),
+                    "",
+                    "SA-Startempfehlungen",
+                    "--------------------",
+                    *self._sa_start_recommendation_lines(),
+                    "",
+                    "Empfohlene Experimentrezepte",
+                    "----------------------------",
+                    *self._experiment_recipe_lines(),
+                    "",
+                    "Ergebnisdateien",
+                    "---------------",
+                    "Gespeicherte Experimente schreiben ein Manifest, eine Summary und genau eine JSON-Datei pro Run.",
+                    "So lassen sich Ergebnisse spaeter wieder laden und analysieren, ohne alles neu laufen zu lassen.",
+                ]
+            self.help_text.configure(state=tk.NORMAL)
+            self.help_text.delete("1.0", tk.END)
+            self.help_text.insert("1.0", "\n".join(help_lines))
+            self.help_text.configure(state=tk.DISABLED)
+            return
         if self._is_english():
             workflow_lines = (
                 [
@@ -5123,6 +7766,44 @@ class PlaygroundGUI:
             ]
         )
 
+    def _sa_start_recommendation_lines(self) -> list[str]:
+        """Liefert einfache Startempfehlungen fuer erste SA-Laeufe."""
+
+        if self._is_english():
+            return [
+                "wine: start with 2 hidden layers such as 16 / 8, mixed layouts, objective = validation_loss, candidate_epochs = 10 to 20, geometric cooling, and medium temperatures.",
+                "digits: start with 32 / 16, do not make candidate training too short, and prefer more SA steps because the benchmark is noisier.",
+                "test_activation: keep the network tiny, use few steps, and focus on understanding start layout, neighbor proposals, and why states are accepted.",
+                "If SA looks random, first increase candidate_epochs a little before changing the cooling aggressively.",
+                "If almost no worse state is accepted, the temperature may be too low or the cooling too aggressive.",
+            ]
+        return [
+            "wine: starte z. B. mit 2 Hidden-Layern wie 16 / 8, gemischten Layouts, objective = validation_loss, candidate_epochs = 10 bis 20, geometrischer Abkuehlung und mittlerer Temperatur.",
+            "digits: starte mit 32 / 16, mache das Kandidatentraining nicht zu kurz und nutze eher mehr SA-Schritte, weil der Benchmark rauschanfaelliger ist.",
+            "test_activation: halte das Netz klein, nutze wenige Schritte und konzentriere dich darauf, Startlayout, Nachbarn und Annahmeentscheidungen zu verstehen.",
+            "Wenn SA zufaellig wirkt, erhoehe zuerst candidate_epochs leicht, bevor du die Abkuehlung stark veraenderst.",
+            "Wenn fast nie schlechtere Zustaende akzeptiert werden, ist die Temperatur oft zu niedrig oder die Abkuehlung zu hart.",
+        ]
+
+    def _experiment_recipe_lines(self) -> list[str]:
+        """Liefert konkrete erste Experimentideen fuer neue Nutzer."""
+
+        if self._is_english():
+            return [
+                "Recipe 1: ReLU vs Tanh on wine. Keep hidden sizes fixed, run several seeds, and compare mean validation accuracy plus probability profiles.",
+                "Recipe 2: Layout comparison on digits. Start with one homogeneous layout and one mixed layout, then inspect which classes stay uncertain.",
+                "Recipe 3: SA from a homogeneous ReLU start. Use Playground or Builder SA mode and compare start layout, best layout, and end layout.",
+                "Recipe 4: Multi-seed stability check. Run the same configuration with 5 or more seeds and compare mean and standard deviation before changing anything else.",
+                "Recipe 5: test_activation as computation lab. Manually set inputs, choose simple hidden sizes, and inspect z, a, and local neuron details.",
+            ]
+        return [
+            "Rezept 1: ReLU vs Tanh auf wine. Hidden-Sizes fixieren, mehrere Seeds laufen lassen und mittlere Validation-Accuracy plus Wahrscheinlichkeitsprofile vergleichen.",
+            "Rezept 2: Layout-Vergleich auf digits. Starte mit einem homogenen und einem gemischten Layout und beobachte, welche Klassen unsicher bleiben.",
+            "Rezept 3: SA von einem homogenen ReLU-Startlayout. Nutze Playground oder Builder-SA und vergleiche Startlayout, Bestlayout und Endlayout.",
+            "Rezept 4: Multi-Seed-Stabilitaet. Fuehre dieselbe Konfiguration mit mindestens 5 Seeds aus und betrachte Mittelwert und Standardabweichung, bevor du weiter optimierst.",
+            "Rezept 5: test_activation als Rechenlabor. Setze Inputs manuell, waehle kleine Hidden-Sizes und analysiere z, a und die lokale Neuron-Rechnung.",
+        ]
+
     def _parameter_help_lines(self) -> list[str]:
         """Liefert ein kompaktes Lexikon der veraenderbaren GUI-Parameter."""
 
@@ -5140,7 +7821,21 @@ class PlaygroundGUI:
                 "Workspace: demo focuses on one model and its behavior, playground focuses on simulated annealing over activation layouts.",
                 "Mode: beginner hides complexity, expert shows deeper controls and comparison tools.",
             ]
-            if self._app_mode() == "playground":
+            if self._app_mode() == "experiment_builder":
+                lines.extend(
+                    [
+                        "Experiment name: identifier for one stored experiment folder and its manifest.",
+                        "Run mode: manual_training trains one fixed layout, simulated_annealing optimizes the layout first.",
+                        "Current layout: this is the builder start layout for the next run. In expert mode the layout editor changes it per layer or per neuron.",
+                        "Current layouts: this list is only for preview and analysis of setup, start, best, or end layouts from a selected run.",
+                        "Seed strategy: either build a consecutive seed list from count and start seed, or enter an explicit list.",
+                        "Primary metric: drives ranking. Validation metrics are used for selection because test should remain final evaluation only.",
+                        "Search type: none means exactly one configuration, grid search tests all discrete combinations, random search samples a reproducible subset.",
+                        "Fixed/list/range: fixed means one value, list means explicit candidates, range means a discrete numeric sweep.",
+                        "Builder output directory: where manifest, summary, and one JSON file per run are stored.",
+                    ]
+                )
+            elif self._app_mode() == "playground":
                 lines.extend(
                     [
                         "Objective: decides what is optimized, for example validation loss or validation accuracy.",
@@ -5183,7 +7878,21 @@ class PlaygroundGUI:
             "Arbeitsmodus: Demo beobachtet ein einzelnes Modell und sein Verhalten, Playground optimiert Aktivierungs-Layouts mit Simulated Annealing.",
             "Modus: Einsteiger blendet Komplexitaet aus, Experte zeigt tiefe Steuerung und Vergleichswerkzeuge.",
         ]
-        if self._app_mode() == "playground":
+        if self._app_mode() == "experiment_builder":
+            lines.extend(
+                [
+                    "Experiment-Name: Kennung fuer einen gespeicherten Experimentordner mit Manifest und JSON-Ergebnissen.",
+                    "Run-Modus: manual_training trainiert ein fixes Layout, simulated_annealing optimiert zuerst das Layout.",
+                    "Aktuelles Layout: Das ist das Startlayout des naechsten Builder-Runs. Im Expertenmodus kannst du es im Layout-Editor pro Layer oder pro Neuron bearbeiten.",
+                    "Aktuelle Layouts: Diese Liste ist nur fuer Vorschau und Analyse von Setup-, Start-, Best- oder Endlayout eines selektierten Runs da.",
+                    "Seed-Strategie: Entweder erzeugst du eine fortlaufende Seed-Liste aus Anzahl und Startwert oder gibst eine explizite Liste ein.",
+                    "Primaere Metrik: steuert das Ranking. Fuer Auswahl wird Validation genutzt, Test bleibt die finale Bewertung.",
+                    "Search-Typ: keine Suche = genau eine Konfiguration, Grid Search = alle diskreten Kombinationen, Random Search = reproduzierbare Teilmenge.",
+                    "Fest / Liste / Bereich: fest bedeutet ein Wert, Liste explizite Kandidaten, Bereich einen diskreten Zahlen-Sweep.",
+                    "Output-Ordner: Dort landen Manifest, Summary und pro Run genau eine JSON-Datei.",
+                ]
+            )
+        elif self._app_mode() == "playground":
             lines.extend(
                 [
                     "Zielmetrik: legt fest, was optimiert wird, zum Beispiel Validation-Loss oder Validation-Accuracy.",
@@ -5227,10 +7936,11 @@ class PlaygroundGUI:
                     "This program is a compact playground for small neural networks with editable activation layouts.",
                     "It allows you to inspect how architecture, activations, inputs, training, and optimization interact.",
                     "",
-                    "Two workspaces",
-                    "--------------",
+                    "Three workspaces",
+                    "----------------",
                     "Demo Mode is for understanding a single network in detail: input, prediction, loss, hidden activations, and training behavior.",
                     "Playground Mode uses the same benchmark and model setup but adds simulated annealing over activation layouts.",
+                    "Experiment Builder is for reproducible multi-seed experiments, stored JSON results, and later re-analysis.",
                     "The workspace setting therefore changes the main goal of the interface, not only its level of detail.",
                     "",
                     "Main idea",
@@ -5259,6 +7969,22 @@ class PlaygroundGUI:
                     "6. Run simulated annealing step by step or to completion.",
                     "7. Compare current state, candidate state, and best state.",
                     "",
+                    "How to work with Experiment Builder",
+                    "-----------------------------------",
+                    "1. Choose benchmark, hidden layers, layout, and run mode.",
+                    "2. Decide whether you want one configuration, grid search, or random search.",
+                    "3. Define a seed strategy and inspect the effective seed list.",
+                    "4. In expert mode, edit the builder start layout per layer or per neuron.",
+                    "5. Run the experiment and inspect ranking, multi-seed aggregation, and per-seed detail.",
+                    "",
+                    "Important builder concepts",
+                    "--------------------------",
+                    "Sample = one visible example used for inspection on the right side.",
+                    "Seed = one reproducible random setup for initialization and comparison.",
+                    "Run = one concrete execution for exactly one configuration and one seed.",
+                    "Configuration = one fixed parameter setting produced by the search space.",
+                    "Experiment = the full builder definition including benchmark, layout, seeds, run mode, and optional search.",
+                    "",
                     "What the left side does",
                     "-----------------------",
                     "The left side is the control strip. It defines dataset, sample, layout, and either training or annealing settings.",
@@ -5281,6 +8007,14 @@ class PlaygroundGUI:
                     "Simulated annealing does not directly optimize weights. It optimizes the activation layout.",
                     "Each candidate layout is trained briefly from scratch and then scored on validation data.",
                     "A better candidate is accepted directly. A worse candidate may still be accepted while the temperature is high.",
+                    "Start layout = the configured layout before search begins.",
+                    "Best layout = the best state found so far.",
+                    "End layout = the layout where the run finally stops.",
+                    "",
+                    "Why validation instead of test?",
+                    "-------------------------------",
+                    "Validation is used for ranking and model selection because test should remain the final unseen evaluation split.",
+                    "Selecting by test metrics would leak final evaluation information into the search.",
                     "",
                     "What the test_activation mode is for",
                     "------------------------------------",
@@ -5306,6 +8040,10 @@ class PlaygroundGUI:
                     "----------------",
                     "The current codebase already contains layout operations and neighbor generation.",
                     "This prepares the project for later search and optimization methods such as simulated annealing.",
+                    "",
+                    "Useful first experiments",
+                    "------------------------",
+                    *self._experiment_recipe_lines(),
                 ]
             )
         return "\n".join(
@@ -5318,10 +8056,11 @@ class PlaygroundGUI:
                 "Dieses Programm ist ein kompakter Playground fuer kleine neuronale Netze mit veraenderbaren Aktivierungs-Layouts.",
                 "Es zeigt, wie Architektur, Aktivierungen, Eingaben, Training und Optimierung zusammenwirken.",
                 "",
-                "Zwei Arbeitsmodi",
+                "Drei Arbeitsmodi",
                 "----------------",
                 "Demo Mode dient dazu, ein einzelnes Netz im Detail zu verstehen: Eingabe, Vorhersage, Loss, Hidden-Aktivierungen und Trainingsverhalten.",
                 "Playground Mode nutzt dieselbe Benchmark- und Modellbasis, erweitert sie aber um Simulated Annealing ueber Aktivierungs-Layouts.",
+                "Experiment Builder dient reproduzierbaren Multi-Seed-Experimenten, gespeicherten JSON-Ergebnissen und spaeterer Wiederanalyse.",
                 "Der Arbeitsmodus aendert also das Hauptziel der Oberflaeche und nicht nur den Detailgrad.",
                 "",
                 "Grundidee",
@@ -5350,6 +8089,22 @@ class PlaygroundGUI:
                 "6. Fuehre Simulated Annealing schrittweise oder komplett aus.",
                 "7. Vergleiche aktuellen Zustand, Kandidat und bestes Layout.",
                 "",
+                "So arbeitest du im Experiment Builder",
+                "-------------------------------------",
+                "1. Waehle Benchmark, Hidden-Layer, Layout und Run-Modus.",
+                "2. Entscheide, ob du eine Einzelkonfiguration, Grid Search oder Random Search willst.",
+                "3. Lege eine Seed-Strategie fest und pruefe die effektive Seed-Liste.",
+                "4. Bearbeite im Expertenmodus das Builder-Startlayout pro Layer oder pro Neuron.",
+                "5. Fuehre das Experiment aus und analysiere Ranking, Multi-Seed-Aggregation und Per-Seed-Details.",
+                "",
+                "Wichtige Builder-Begriffe",
+                "-------------------------",
+                "Sample = ein sichtbares Beispiel, das rechts zur Analyse gezeigt wird.",
+                "Seed = eine reproduzierbare Zufallskonfiguration fuer Initialisierung und Vergleich.",
+                "Run = eine konkrete Ausfuehrung fuer genau eine Konfiguration und genau einen Seed.",
+                "Konfiguration = eine feste Parameterbelegung aus dem Suchraum.",
+                "Experiment = die komplette Builder-Definition aus Benchmark, Layout, Seeds, Run-Modus und optionaler Suche.",
+                "",
                 "Was die linke Seite macht",
                 "-------------------------",
                 "Die linke Seite ist die Steuerleiste. Hier stellst du Datensatz, Sample, Layout und je nach Arbeitsmodus Training oder Annealing ein.",
@@ -5372,6 +8127,14 @@ class PlaygroundGUI:
                 "Simulated Annealing optimiert nicht direkt die Gewichte, sondern das Aktivierungs-Layout.",
                 "Jedes Kandidaten-Layout wird kurz frisch trainiert und danach ueber Validation-Daten bewertet.",
                 "Ein besserer Kandidat wird direkt akzeptiert. Ein schlechterer kann bei hoher Temperatur trotzdem noch angenommen werden.",
+                "Startlayout = das konfigurierte Layout vor Beginn der Suche.",
+                "Bestlayout = der bisher beste gefundene Zustand.",
+                "Endlayout = das Layout, bei dem der Lauf schliesslich stoppt.",
+                "",
+                "Warum Validation statt Test?",
+                "----------------------------",
+                "Validation wird fuer Ranking und Modellauswahl benutzt, weil Test die finale ungesehene Bewertungsmenge bleiben soll.",
+                "Wer nach Testmetriken auswaehlt, mischt Endbewertung und Suche unguenstig miteinander.",
                 "",
                 "Wofuer test_activation da ist",
                 "-----------------------------",
@@ -5397,6 +8160,10 @@ class PlaygroundGUI:
                 "--------------------------------",
                 "Die aktuelle Codebasis enthaelt bereits Layout-Operationen und Neighbor-Generierung.",
                 "Damit ist das Projekt vorbereitet fuer spaetere Such- und Optimierungsverfahren wie Simulated Annealing.",
+                "",
+                "Sinnvolle erste Experimente",
+                "---------------------------",
+                *self._experiment_recipe_lines(),
             ]
         )
 
@@ -5929,6 +8696,7 @@ class PlaygroundGUI:
         self.neuron_layer_var.set(f"L{layer_index + 1}")
         self._update_neuron_dropdowns()
         self.neuron_index_var.set(str(neuron_index))
-        if self.current_layout is not None:
-            self.neuron_activation_var.set(self.current_layout.layers[layer_index][neuron_index])
+        editable_layout = self._editable_layout()
+        if editable_layout is not None:
+            self.neuron_activation_var.set(editable_layout.layers[layer_index][neuron_index])
         self._refresh_views()

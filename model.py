@@ -26,6 +26,7 @@ from activations import (
     ActivationLayout,
     apply_activation_derivatives,
     apply_activation_layout,
+    parse_layout_spec,
 )
 
 
@@ -215,6 +216,42 @@ class ModularMLP:
         cloned_model.weights = [weight_matrix.copy() for weight_matrix in self.weights]
         cloned_model.biases = [bias_vector.copy() for bias_vector in self.biases]
         return cloned_model
+
+    def to_state_dict(self) -> dict[str, object]:
+        """Serialisiert das Modell inklusive Gewichten und Biases fuer JSON."""
+
+        return {
+            "input_size": self.input_size,
+            "hidden_sizes": list(self.hidden_sizes),
+            "output_size": self.output_size,
+            "layout_spec": self.layout.to_compact_spec(),
+            "weights": [weight_matrix.tolist() for weight_matrix in self.weights],
+            "biases": [bias_vector.tolist() for bias_vector in self.biases],
+        }
+
+    @classmethod
+    def from_state_dict(cls, payload: dict[str, object]) -> "ModularMLP":
+        """Rekonstruiert ein serialisiertes Modell aus JSON-Daten."""
+
+        hidden_sizes = tuple(int(size) for size in payload["hidden_sizes"])  # type: ignore[index]
+        layout = parse_layout_spec(str(payload["layout_spec"]), hidden_sizes)
+        model = cls(
+            input_size=int(payload["input_size"]),  # type: ignore[index]
+            hidden_sizes=hidden_sizes,
+            output_size=int(payload["output_size"]),  # type: ignore[index]
+            layout=layout,
+            weight_scale=1.0,
+            random_state=0,
+        )
+        model.weights = [
+            np.asarray(weight_matrix, dtype=np.float64)
+            for weight_matrix in payload["weights"]  # type: ignore[index]
+        ]
+        model.biases = [
+            np.asarray(bias_vector, dtype=np.float64)
+            for bias_vector in payload["biases"]  # type: ignore[index]
+        ]
+        return model
 
     @property
     def W1(self) -> Array:

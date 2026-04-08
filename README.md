@@ -29,6 +29,12 @@ Start the GUI in simulated annealing mode:
 python main.py --gui --gui-app-mode playground
 ```
 
+Start the GUI in experiment-builder mode:
+
+```bash
+python main.py --gui --gui-app-mode experiment_builder
+```
+
 Show CLI help:
 
 ```bash
@@ -53,6 +59,7 @@ python main.py --show-layout-help
 - bilingual GUI in **German** and **English**
 - `Demo Mode` for understanding data flow, activations, training, and neuron behavior
 - `Playground Mode` for **Simulated Annealing** over activation layouts
+- `Experiment Builder` for multi-seed runs, grid/random search, JSON result storage, and later re-analysis
 
 ## GUI Workspaces
 
@@ -87,6 +94,24 @@ Playground Mode adds a real simulated annealing workflow:
 - visible current state, candidate, best state, and layout diffs
 - score, temperature, acceptance probability, and acceptance rate plots
 - didactic explanations for acceptance and rejection decisions
+
+### Experiment Builder
+
+```bash
+python main.py --gui --gui-app-mode experiment_builder
+```
+
+Experiment Builder focuses on reproducible experiments instead of one interactive run:
+
+- manual training or simulated annealing as experiment type
+- multiple seeds per configuration
+- grid search and random search over discrete hyperparameter spaces
+- JSON output per experiment and per run
+- ranking by validation metrics
+- aggregated multi-seed analysis
+- per-seed detail views
+- stored-result reloading
+- expert-mode layout editor for the builder start layout
 
 ## CLI Examples
 
@@ -184,6 +209,18 @@ These operations are used both for manual experiments and for the simulated anne
 - `annealing_schedules.py`: cooling schedules
 - `annealing_objectives.py`: layout evaluation objectives
 - `annealing_runner.py`: simulated annealing execution and history
+- `experiment_builder.py`: experiment dataclasses and builder-related definitions
+- `experiment_runner.py`: multi-seed execution, manual training runs, and SA runs
+- `search_spaces.py`: discrete search spaces for grid/random search
+- `results_store.py`: JSON storage and loading
+- `results_analysis.py`: aggregation and ranking across seeds and configurations
+- `experiment_plots.py`: plots for builder analyses
+
+## Documentation
+
+- `docs/HANDBOOK.md`: end-to-end usage guide for all three GUI modes
+- `docs/ARCHITECTURE.md`: codebase structure, data flow, training, SA, and stored results
+- `docs/EXPERIMENT_RECIPES.md`: concrete experiment ideas and starter workflows
 
 ## Current Scope
 

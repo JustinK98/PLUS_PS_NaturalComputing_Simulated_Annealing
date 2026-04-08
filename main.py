@@ -87,7 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_GUI_APP_MODE,
         help=(
             "Arbeitsmodus der GUI: demo fuer Verstehen/Visualisieren, "
-            "playground fuer Simulated Annealing."
+            "playground fuer Simulated Annealing, "
+            "experiment_builder fuer Multi-Seed-Experimente und Suchlaeufe."
         ),
     )
     parser.add_argument(
@@ -509,7 +510,9 @@ def _run_interactive_setup(
             explanation=(
                 "demo ist fuer Verstehen, Visualisieren und schrittweises Training gedacht.\n"
                 "playground erweitert dieselbe Codebasis um Simulated Annealing und eine "
-                "sichtbare Optimierung ueber Aktivierungs-Layouts."
+                "sichtbare Optimierung ueber Aktivierungs-Layouts.\n"
+                "experiment_builder ist fuer reproduzierbare Multi-Seed-Runs, JSON-Ergebnisse "
+                "und systematische Suchlaeufe gedacht."
             ),
             options=SUPPORTED_GUI_APP_MODES,
             default=args.gui_app_mode,

@@ -28,7 +28,7 @@ SUPPORTED_BENCHMARKS = ("breast_cancer", "wine", "digits", "test_activation")
 SUPPORTED_ACTIVATIONS = ("relu", "tanh", "sigmoid", "leaky_relu")
 SUPPORTED_GUI_MODES = ("beginner", "expert")
 SUPPORTED_GUI_LANGUAGES = ("de", "en")
-SUPPORTED_GUI_APP_MODES = ("demo", "playground")
+SUPPORTED_GUI_APP_MODES = ("demo", "playground", "experiment_builder")
 
 
 # Standardwerte fuer einen schnellen Einstieg.
@@ -54,6 +54,9 @@ DEFAULT_ANNEALING_ITERATIONS_PER_TEMPERATURE = 5
 DEFAULT_ANNEALING_MAX_STEPS = 40
 DEFAULT_ANNEALING_MIN_TEMPERATURE = 0.02
 DEFAULT_ANNEALING_NEIGHBORHOODS = ("set_neuron", "fill_layer", "swap_neurons")
+DEFAULT_EXPERIMENT_OUTPUT_SUBDIR = "experiments"
+DEFAULT_EXPERIMENT_SEARCH_TYPE = "none"
+DEFAULT_EXPERIMENT_RANDOM_SEARCH_SAMPLES = 8
 MIN_HIDDEN_LAYERS = 1
 MAX_HIDDEN_LAYERS = 4
 
