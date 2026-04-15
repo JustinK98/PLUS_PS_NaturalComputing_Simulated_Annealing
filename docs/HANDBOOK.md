@@ -388,12 +388,126 @@ This allows:
 - keep the first experiments small and readable
 - if simulated annealing feels random, increase `candidate_epochs` before changing everything else
 
-## 11. Where To Continue
+## 11. Guided Experiment Recipes
+
+### Recipe 1: ReLU vs Tanh on `wine`
+
+Goal:
+
+- compare two simple activation layouts on a compact multiclass benchmark
+
+Suggested setup:
+
+- benchmark: `wine`
+- hidden sizes: `16 / 8`
+- seeds: `5`
+- mode: `manual_training`
+- layout A: `relu*16|relu*8`
+- layout B: `tanh*16|tanh*8`
+- epochs: `50` to `120`
+- learning rate: `0.03`
+
+What to watch:
+
+- mean validation accuracy
+- standard deviation across seeds
+- probability profiles per class
+- convergence speed and stability
+
+### Recipe 2: Mixed vs Homogeneous Layout on `digits`
+
+Goal:
+
+- see whether mixed hidden activations change uncertainty patterns on image-like data
+
+Suggested setup:
+
+- benchmark: `digits`
+- hidden sizes: `32 / 16`
+- seeds: `5`
+- mode: `manual_training`
+- layout A: `relu*32|relu*16`
+- layout B: `relu*16,tanh*16|relu*8,sigmoid*8`
+
+What to watch:
+
+- mean validation accuracy
+- test accuracy
+- uncertain digits
+- probability shifts on difficult classes
+
+### Recipe 3: Simulated Annealing from a Homogeneous ReLU Start
+
+Goal:
+
+- use SA to improve a simple baseline layout
+
+Suggested setup:
+
+- benchmark: `wine`
+- hidden sizes: `16 / 8`
+- mode: `simulated_annealing`
+- start layout: `relu*16|relu*8`
+- objective: `validation_loss`
+- candidate epochs: `10`
+- start temperature: `1.0`
+- cooling: `geometric`
+- cooling parameter: `0.85`
+- iterations per temperature: `3`
+- max steps: `20`
+- seeds: `3` to `5`
+
+What to watch:
+
+- start layout vs best layout
+- acceptance rate
+- temperature drop
+- whether best really improves validation metrics
+
+### Recipe 4: Multi-Seed Stability Check
+
+Goal:
+
+- test whether one promising configuration is actually stable
+
+Suggested setup:
+
+- choose one benchmark and one layout
+- run mode: `manual_training`
+- seeds: at least `5`
+- no search space
+
+What to watch:
+
+- mean validation accuracy
+- standard deviation
+- best seed vs worst seed
+
+### Recipe 5: `test_activation` as Computation Lab
+
+Goal:
+
+- understand raw activation behavior in a tiny network
+
+Suggested setup:
+
+- benchmark: `test_activation`
+- hidden sizes: `4 / 3`
+- use custom sample
+- compare layouts such as:
+  - `relu,tanh,sigmoid,leaky_relu|relu,tanh,sigmoid`
+  - `relu*4|relu*3`
+  - `sigmoid*4|sigmoid*3`
+
+What to watch:
+
+- local neuron equations
+- weighted sum `z`
+- activation output `a`
+- how small input changes affect visible computation
+
+## 12. Where To Continue
 
 For code structure and data flow, see:
 
 - `docs/ARCHITECTURE.md`
-
-For guided experiments, see:
-
-- `docs/EXPERIMENT_RECIPES.md`

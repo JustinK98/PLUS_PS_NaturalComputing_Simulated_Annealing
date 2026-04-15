@@ -98,6 +98,39 @@ class ExperimentDefinition:
         payload["neighborhood_operations"] = list(self.neighborhood_operations)
         return payload
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ExperimentDefinition":
+        """Rekonstruiert eine ExperimentDefinition aus JSON-nahen Daten."""
+
+        return cls(
+            experiment_id=str(payload["experiment_id"]),
+            benchmark=str(payload["benchmark"]),
+            hidden_sizes=tuple(int(size) for size in payload["hidden_sizes"]),
+            layout_spec=str(payload["layout_spec"]),
+            run_mode=str(payload["run_mode"]),
+            seeds=tuple(int(seed) for seed in payload["seeds"]),
+            primary_metric=str(payload["primary_metric"]),
+            language=str(payload.get("language", "en")),
+            save_json=bool(payload.get("save_json", True)),
+            output_dir=str(payload["output_dir"]),
+            shuffle=bool(payload["shuffle"]),
+            learning_rate=float(payload["learning_rate"]),
+            batch_size=int(payload["batch_size"]),
+            weight_scale=float(payload["weight_scale"]),
+            epochs=int(payload["epochs"]),
+            objective_name=str(payload["objective_name"]),
+            candidate_epochs=int(payload["candidate_epochs"]),
+            neighborhood_operations=tuple(str(value) for value in payload["neighborhood_operations"]),
+            start_temperature=float(payload["start_temperature"]),
+            cooling_schedule=str(payload["cooling_schedule"]),
+            cooling_parameter=float(payload["cooling_parameter"]),
+            iterations_per_temperature=int(payload["iterations_per_temperature"]),
+            max_steps=int(payload["max_steps"]),
+            min_temperature=float(payload["min_temperature"]),
+            search_space=SearchSpaceDefinition.from_dict(payload.get("search_space", {})),
+            created_at=str(payload.get("created_at", utc_timestamp())),
+        )
+
 
 @dataclass(frozen=True)
 class RunDefinition:

@@ -1,276 +1,244 @@
 # Architecture Overview
 
-This document explains how the repository is structured and how data moves through it.
+This repository is now a Qt-only desktop application with a thin CLI layer and a shared service boundary.
 
-## 1. High-Level Structure
+## 1. High-Level Shape
 
-The repository separates:
+The codebase is split into four practical layers:
 
-- benchmark loading
-- activation layout logic
-- model mathematics
-- training loop
-- plotting
-- GUI orchestration
-- simulated annealing
-- experiment execution and result storage
+- `cli/`
+  - command parsing
+  - interactive assistant
+  - headless command handlers
+- `ui_qt/`
+  - Qt application shell
+  - workspaces
+  - reusable widgets
+  - Qt-specific background task handling
+- `services/`
+  - GUI-neutral orchestration
+  - didactic payload builders
+  - session abstractions for training and simulated annealing
+- core modules
+  - benchmarks
+  - activation layouts
+  - MLP model
+  - trainer
+  - simulated annealing
+  - experiment execution and storage
 
-## 2. Main Files
+## 2. Current Entry Paths
 
-### Core Model and Training
+### Main Entry
+
+- `main.py`
+  - builds the parser
+  - resolves a command
+  - dispatches to CLI or Qt GUI
+
+### GUI Entry
+
+- `python main.py gui --mode demo`
+- `python main.py gui --mode playground`
+- `python main.py gui --mode experiment_builder`
+
+Qt startup lives in:
+
+- `ui_qt/app.py`
+- `ui_qt/shell/main_window.py`
+
+### CLI Entry
+
+- `python main.py run ...`
+- `python main.py experiment run ...`
+- `python main.py experiment analyze ...`
+- `python main.py experiment template ...`
+
+## 3. Core Model and Training
+
+- `benchmarks.py`
+  - dataset loading
+  - scaling
+  - train / validation / test split
+  - target names
 
 - `activations.py`
-  - activation functions
-  - activation derivatives
+  - activation functions and derivatives
   - layout parsing
-  - layout modification logic
-  - neighborhood generation
+  - layout editing helpers
+  - neighborhood operations
 
 - `model.py`
   - `ModularMLP`
   - forward pass
   - loss and gradients
-  - parameter updates
-  - neuron inspection
+  - tracing and neuron inspection
   - model state serialization
 
 - `trainer.py`
-  - training loop
-  - mini-batch iteration
+  - mini-batch training loop
   - history collection
+  - epoch streaming hooks used by the Qt training session path
 
-- `benchmarks.py`
-  - benchmark loading
-  - scaling
-  - train / validation / test split
-  - target names
-
-### Visualization
-
-- `plotting.py`
-  - standard plots for training histories
-
-- `terminal_viz.py`
-  - terminal ASCII views
-
-- `gui.py`
-  - interactive GUI
-  - all three work modes
-  - network visualization
-  - learning help
-  - builder analysis views
-
-### Simulated Annealing
+## 4. Simulated Annealing
 
 - `annealing.py`
-  - annealing dataclasses
-  - acceptance logic
+  - SA dataclasses and acceptance logic
 
 - `annealing_schedules.py`
-  - temperature schedules
+  - cooling schedules
 
 - `annealing_objectives.py`
-  - candidate evaluation by short training
+  - candidate evaluation after short training
 
 - `annealing_runner.py`
-  - one complete SA run
-  - step history
-  - current / candidate / best state handling
+  - complete SA runs
 
-### Experiment Builder
+- `services/annealing_service.py`
+  - headless annealing execution
+
+- `services/annealing_session_service.py`
+  - stepwise SA session snapshots for the Qt playground
+
+## 5. Experiment System
 
 - `experiment_builder.py`
-  - builder dataclasses
   - experiment and run definitions
 
 - `search_spaces.py`
-  - discrete search spaces
-  - fixed / list / range
-  - grid search expansion
-  - random search sampling
+  - fixed / list / range search spaces
+  - grid and random search expansion
 
 - `experiment_runner.py`
-  - executes builder experiments
-  - manual training runs
-  - SA runs
-  - multi-seed orchestration
-
-- `results_analysis.py`
-  - aggregation across runs and seeds
-  - ranking
-  - summary generation
+  - experiment execution over configurations and seeds
 
 - `results_store.py`
-  - JSON storage
-  - manifest / summary / per-run loading
+  - manifest / summary / per-run JSON storage
 
-- `experiment_plots.py`
-  - plots reconstructed from builder results
+- `results_analysis.py`
+  - aggregation and ranking
 
-### Program Entry
+- `services/experiment_service.py`
+  - GUI- and CLI-friendly experiment load/save/run helpers
 
-- `main.py`
-  - CLI
-  - terminal assistant
-  - GUI start logic
+- `services/preview_service.py`
+  - summary formatting helpers
 
-- `configs.py`
-  - defaults
-  - shared configuration dataclasses
+## 6. Qt UI Layer
 
-## 3. Data Flow
+### Shell
 
-The standard data flow is:
+- `ui_qt/shell/main_window.py`
+  - top-level workspace router
+  - language / detail controls
+  - global handbook window
 
-1. `main.py` chooses CLI or GUI
-2. a benchmark is loaded through `benchmarks.py`
-3. a layout is parsed through `activations.py`
-4. the model is constructed in `model.py`
-5. training is executed through `trainer.py`
-6. plots and visualizations are created
+### Workspaces
 
-In GUI mode, `gui.py` orchestrates these steps live.
+- `ui_qt/workspaces/demo_workspace.py`
+  - sample inspection
+  - training
+  - compare
+  - neuron tracker
+  - stepper
 
-## 4. Training Flow
+- `ui_qt/workspaces/playground_workspace.py`
+  - SA step flow
+  - snapshots
+  - decision/history panels
 
-Normal training works as follows:
+- `ui_qt/workspaces/experiment_builder_workspace.py`
+  - experiment definition editing
+  - results loading
+  - run table
+  - per-run preview
 
-1. benchmark is loaded and split
-2. a `ModularMLP` is initialized
-3. mini-batches are created
-4. forward pass is run
-5. loss and gradients are computed
-6. gradients are applied
-7. train and validation metrics are stored each epoch
-8. final test metrics are measured
+### Shared Widgets
 
-The important conceptual split is:
+- `ui_qt/widgets/network_view.py`
+- `ui_qt/widgets/sample_panel.py`
+- `ui_qt/widgets/neuron_detail_panel.py`
+- `ui_qt/widgets/activation_curve_widget.py`
+- `ui_qt/widgets/stepper_panel.py`
+- `ui_qt/widgets/compare_panel.py`
+- `ui_qt/widgets/annealing_*_panel.py`
+- `ui_qt/widgets/help_dialog.py`
+- `ui_qt/widgets/info_button.py`
 
-- `model.py` knows the math
-- `trainer.py` knows the training loop
+### Qt Tasking
 
-## 5. Layout Flow
+- `ui_qt/tasking.py`
+  - Qt thread-pool based background execution for UI actions
 
-An activation layout is a structured object that describes all hidden activations.
+## 7. Service Layer Responsibilities
 
-Typical flow:
+The service layer is the application boundary. Qt widgets should render service output, not reimplement domain logic.
 
-1. user edits a layout string or GUI controls
-2. `parse_layout_spec(...)` creates an `ActivationLayout`
-3. the model uses that layout
-4. the GUI colors neurons by activation type
-5. SA treats that layout as a search state
+Important services:
 
-## 6. Simulated Annealing Flow
+- `services/analysis_sample_service.py`
+  - benchmark-specific sample payloads
 
-In this project, simulated annealing searches over activation layouts.
+- `services/network_projection_service.py`
+  - reduced network projection for readable visualization
 
-Flow:
+- `services/neuron_analysis_service.py`
+  - neuron tracker payloads
 
-1. choose a start layout
-2. build an evaluator for candidate layouts
-3. generate neighbors from the current layout
-4. train each candidate briefly from scratch
-5. compute validation-based objective
-6. accept or reject candidate depending on score and temperature
-7. update current, best, and history
+- `services/stepper_service.py`
+  - forward/backward teaching entries
 
-Important detail:
+- `services/compare_service.py`
+  - baseline/current comparison payloads
 
-SA does not directly optimize weights.
+- `services/help_service.py`
+  - handbook, workspace help, and field-level didactic content
 
-It compares layouts by training each layout for a short budget and then evaluating it.
+- `services/training_service.py`
+  - single-run training from CLI or services
 
-## 7. Experiment Builder Flow
+- `services/training_session_service.py`
+  - incremental training snapshots for Demo
 
-The Experiment Builder adds a second layer of orchestration.
+- `services/task_runner.py`
+  - generic background-task abstraction used outside the Qt event model
 
-Flow:
+## 8. Data Flow
 
-1. define one experiment
-2. expand search space into configurations
-3. combine each configuration with all selected seeds
-4. execute one run per configuration-seed pair
-5. aggregate metrics
-6. store manifest, summary, and runs
-7. reload later for analysis
+### Demo
 
-## 8. JSON Result Structure
+1. load benchmark
+2. build activation layout
+3. build preview model
+4. inspect one sample through service payloads
+5. train in chunks
+6. update plot, network, compare, and neuron details
 
-Stored experiments typically contain:
+### Playground
 
-- `manifest.json`
-- `summary.json`
-- `runs/<run_id>.json`
+1. create start layout
+2. create annealing session
+3. evaluate start
+4. step or complete SA
+5. render snapshots, decision text, history, and network projection
 
-### Manifest
+### Experiment Builder
 
-Contains:
+1. build experiment definition
+2. run experiment headless or load stored results
+3. aggregate summary
+4. render run table, detail view, and network preview
 
-- experiment identity
-- benchmark
-- run mode
-- search type
-- summary path
-- run file list
+## 9. Test Strategy
 
-### Summary
+The current test suite is intentionally conservative:
 
-Contains:
+- parser and CLI smoke tests
+- service tests
+- Qt widget tests for key didactic panels
+- Qt smoke tests for all workspaces
 
-- number of runs
-- number of seeds
-- ranking
-- aggregated metrics per configuration
+The repo should be kept green with:
 
-### Per-Run JSON
-
-Contains:
-
-- run definition
-- metrics
-- history
-- layout
-- extra metadata
-
-For SA runs, extra metadata includes:
-
-- objective name
-- start layout
-- best layout
-- end layout
-- annealing config
-- stop reasons
-- step history
-
-## 9. GUI Architecture Notes
-
-`gui.py` is the largest file because it coordinates:
-
-- controls
-- state variables
-- plots
-- tabs
-- network drawing
-- live inspection
-- builder analysis
-
-The most important design rule is:
-
-The GUI should orchestrate and explain, while the actual training, layout logic, and SA backend stay in separate modules.
-
-## 10. Where To Read First
-
-For someone new to the codebase, a good reading order is:
-
-1. `main.py`
-2. `benchmarks.py`
-3. `activations.py`
-4. `model.py`
-5. `trainer.py`
-6. `annealing.py`
-7. `annealing_runner.py`
-8. `experiment_runner.py`
-9. `gui.py`
-
-This order helps because it follows the pipeline before the large orchestration layer.
+- `python -m unittest discover -s tests -v`
+- offscreen Qt launch smokes for all three workspaces

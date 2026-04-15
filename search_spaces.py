@@ -106,6 +106,22 @@ class SearchValueDefinition:
             return float(value)
         return str(value)
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "SearchValueDefinition":
+        """Rekonstruiert eine SearchValueDefinition aus JSON-nahen Daten."""
+
+        values = tuple(payload.get("values", ()))
+        return cls(
+            parameter_name=str(payload["parameter_name"]),
+            kind=str(payload["kind"]),
+            value_type=str(payload["value_type"]),
+            fixed_value=payload.get("fixed_value"),
+            values=values,
+            range_start=payload.get("range_start"),
+            range_stop=payload.get("range_stop"),
+            range_step=payload.get("range_step"),
+        )
+
 
 @dataclass(frozen=True)
 class SearchSpaceDefinition:
@@ -126,6 +142,21 @@ class SearchSpaceDefinition:
             raise ValueError("random_samples muss positiv sein.")
         if self.random_state < 0:
             raise ValueError("random_state darf nicht negativ sein.")
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "SearchSpaceDefinition":
+        """Rekonstruiert einen SearchSpaceDefinition aus JSON-nahen Daten."""
+
+        value_definitions = tuple(
+            SearchValueDefinition.from_dict(item)
+            for item in payload.get("value_definitions", ())
+        )
+        return cls(
+            search_type=str(payload.get("search_type", "none")),
+            value_definitions=value_definitions,
+            random_samples=int(payload.get("random_samples", 8)),
+            random_state=int(payload.get("random_state", 42)),
+        )
 
 
 def expand_search_space(search_space: SearchSpaceDefinition) -> list[dict[str, Any]]:

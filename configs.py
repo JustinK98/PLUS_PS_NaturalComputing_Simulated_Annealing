@@ -176,6 +176,23 @@ class VisualizationConfig:
     save_prefix: str | None = None
 
 
+@dataclass(frozen=True)
+class GuiExperimentConfig:
+    """Konfigurationsobjekt fuer den Start der Qt-GUI."""
+
+    benchmark: str
+    hidden_sizes: tuple[int, ...]
+    app_mode: str = DEFAULT_GUI_APP_MODE
+    layout_spec: str = DEFAULT_LAYOUT
+    epochs: int = DEFAULT_EPOCHS
+    learning_rate: float = DEFAULT_LEARNING_RATE
+    batch_size: int = DEFAULT_BATCH_SIZE
+    weight_scale: float = DEFAULT_WEIGHT_SCALE
+    random_state: int = DEFAULT_RANDOM_SEED
+    mode: str = "beginner"
+    language: str = "de"
+
+
 def default_hidden_sizes(benchmark_name: str) -> tuple[int, ...]:
     """Liefert die Standard-Hidden-Sizes fuer einen Benchmark.
 

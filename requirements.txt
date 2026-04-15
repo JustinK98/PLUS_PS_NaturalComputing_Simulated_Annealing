@@ -3,11 +3,8 @@
 # - numpy 2.4.4
 # - matplotlib 3.10.8
 # - scikit-learn 1.8.0
-#
-# Hinweis:
-# tkinter ist ein Standardbibliotheks-Modul, wird aber je nach Betriebssystem
-# ueber ein separates Systempaket bereitgestellt und nicht ueber pip installiert.
 
 numpy==2.4.4
 matplotlib==3.10.8
 scikit-learn==1.8.0
+PySide6-Essentials==6.11.0

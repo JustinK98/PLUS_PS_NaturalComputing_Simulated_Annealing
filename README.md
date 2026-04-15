@@ -1,8 +1,6 @@
 # Activation Playground
 
-Base project for the seminar **Natural Computing** at the **Paris Lodron University Salzburg**.
-
-This repository is a compact playground for small neural networks with editable activation layouts. It combines a didactic demo interface with a simulated annealing playground on top of the same benchmark, model, and visualization pipeline.
+Qt-only desktop playground for small neural networks with editable activation layouts, stepwise training inspection, and simulated annealing over activation distributions.
 
 ## Quick Start
 
@@ -15,30 +13,46 @@ export MPLCONFIGDIR=.mplconfig
 python main.py
 ```
 
-This starts the interactive terminal assistant.
+`python main.py` starts the interactive assistant.
 
 Start the GUI directly:
 
 ```bash
-python main.py --gui
+python main.py gui --mode demo
+python main.py gui --mode playground
+python main.py gui --mode experiment_builder
 ```
 
-Start the GUI in simulated annealing mode:
+Useful GUI options:
 
 ```bash
-python main.py --gui --gui-app-mode playground
+python main.py gui --mode playground --detail-level expert --language en
 ```
 
-Start the GUI in experiment-builder mode:
+## Core CLI Commands
+
+Single training run:
 
 ```bash
-python main.py --gui --gui-app-mode experiment_builder
+python main.py run --benchmark wine --hidden-sizes 16 8 --layout "relu|tanh"
 ```
 
-Show CLI help:
+Export an experiment definition:
 
 ```bash
-python main.py --help
+python main.py experiment template --output outputs/examples/example_experiment.json
+```
+
+Run a stored experiment headless:
+
+```bash
+python main.py experiment run --config outputs/examples/example_experiment.json
+```
+
+Analyze stored experiment results:
+
+```bash
+python main.py experiment analyze --path outputs/backend_regression/backend_regression_grid
 ```
 
 Show layout and neighbor syntax help:
@@ -47,181 +61,68 @@ Show layout and neighbor syntax help:
 python main.py --show-layout-help
 ```
 
-## Current Capabilities
+## What the Application Covers
 
-- small MLPs with **1 to 4 hidden layers**
-- activation functions assigned per layer or per individual neuron
+- small MLPs with 1 to 4 hidden layers
+- activation functions per layer or per neuron
 - supported activations: `relu`, `tanh`, `sigmoid`, `leaky_relu`
 - benchmarks: `breast_cancer`, `wine`, `digits`, `test_activation`
-- training with **train / validation / test**, **loss**, and **accuracy**
-- layout editing, local neighbor operations, and layout diffs
-- terminal ASCII views and Matplotlib plots
-- bilingual GUI in **German** and **English**
-- `Demo Mode` for understanding data flow, activations, training, and neuron behavior
-- `Playground Mode` for **Simulated Annealing** over activation layouts
-- `Experiment Builder` for multi-seed runs, grid/random search, JSON result storage, and later re-analysis
+- train / validation / test evaluation
+- sample-level inspection, neuron tracker, activation curve, and stepper
+- simulated annealing over activation layouts
+- experiment builder with multi-seed runs, grid search, random search, and JSON result storage
+- bilingual Qt GUI in German and English
 
-## GUI Workspaces
+## Main Workspaces
 
-### Demo Mode
+### Demo
 
-```bash
-python main.py --gui --gui-app-mode demo
-```
+Use `Demo` to understand one concrete network:
 
-Demo Mode focuses on understanding one concrete network:
+- inspect one sample
+- train step by step
+- read the training plot
+- click neurons and inspect local computations
+- compare current state against a stored baseline
 
-- dataset and sample inspection
-- network visualization with neurons and connections
-- activation colors per hidden neuron
-- clickable neuron inspection with local computations
-- training plots
-- forward/backward stepper
-- baseline vs. current comparison
+### Playground
 
-### Playground Mode
+Use `Playground` to inspect one simulated annealing run:
 
-```bash
-python main.py --gui --gui-app-mode playground
-```
-
-Playground Mode adds a real simulated annealing workflow:
-
-- activation layout as optimization state
-- configurable neighborhood operations
-- objective selection: `validation_loss` or `validation_accuracy`
-- cooling schedules: `geometric`, `linear`, `logarithmic`
-- visible current state, candidate, best state, and layout diffs
-- score, temperature, acceptance probability, and acceptance rate plots
-- didactic explanations for acceptance and rejection decisions
+- define a start layout
+- choose an objective
+- select neighborhood operations
+- step SA manually or run to completion
+- compare start, candidate, current, best, and end states
 
 ### Experiment Builder
 
-```bash
-python main.py --gui --gui-app-mode experiment_builder
-```
+Use `Experiment Builder` for reproducible experiments:
 
-Experiment Builder focuses on reproducible experiments instead of one interactive run:
-
-- manual training or simulated annealing as experiment type
-- multiple seeds per configuration
-- grid search and random search over discrete hyperparameter spaces
-- JSON output per experiment and per run
-- ranking by validation metrics
-- aggregated multi-seed analysis
-- per-seed detail views
-- stored-result reloading
-- expert-mode layout editor for the builder start layout
-
-## CLI Examples
-
-Standard training run:
-
-```bash
-python main.py --benchmark wine --hidden-sizes 16 8 --layout "relu|tanh" --epochs 120
-```
-
-Expert GUI:
-
-```bash
-python main.py --gui --gui-mode expert
-```
-
-English Playground Mode:
-
-```bash
-python main.py --gui --gui-app-mode playground --gui-language en --gui-mode expert
-```
-
-Save plots from a CLI run:
-
-```bash
-python main.py --benchmark digits --layout "relu|relu" --epochs 40 --save-prefix demo/digits_run
-```
+- define benchmark, hidden sizes, layout, and run mode
+- run multiple seeds
+- perform grid or random search
+- store manifest / summary / per-run JSON files
+- reload and analyze experiment results later
 
 ## Benchmarks
 
-### `breast_cancer`
-
-- 30 numerical input features
-- 2 classes
-- compact binary classification benchmark
-
-### `wine`
-
-- 13 numerical input features
-- 3 classes
-- useful for comparing activation layouts in a small multiclass setting
-
-### `digits`
-
-- 64 inputs from 8x8 grayscale digit images
-- 10 classes
-- especially useful for visible input, target, and prediction flow
-
-### `test_activation`
-
-- artificial mini benchmark with 3 inputs
-- intended for raw forward computations and activation comparisons
-
-## Layout Syntax
-
-A layout describes the activation functions of all hidden layers.
-
-```text
-relu|relu
-relu|tanh|sigmoid
-relu*16|tanh*8
-relu*5,tanh*5|sigmoid*4
-```
-
-Rules:
-
-- `|` separates hidden layers
-- `,` separates activation groups inside one layer
-- `relu*16` means 16 neurons with `relu`
-
-## Neighbor Syntax
-
-Neighbor operations modify a layout locally.
-
-```text
-set:L1:0:sigmoid
-fill:L2:tanh
-cycle:L1:3
-swap:L2:1:4
-```
-
-These operations are used both for manual experiments and for the simulated annealing search space.
+- `breast_cancer`: 30 numeric features, 2 classes
+- `wine`: 13 numeric features, 3 classes
+- `digits`: 64 inputs from 8x8 grayscale digits, 10 classes
+- `test_activation`: tiny artificial benchmark for raw activation-path analysis
 
 ## Project Structure
 
-- `main.py`: CLI, interactive assistant, program entry point
-- `benchmarks.py`: dataset loading and splitting
-- `activations.py`: activation functions, layouts, neighbor logic
-- `model.py`: MLP, forward pass, backpropagation, neuron inspection
-- `trainer.py`: training loop and metrics
-- `plotting.py`: Matplotlib plots
-- `terminal_viz.py`: ASCII terminal views
-- `gui.py`: interactive GUI
-- `configs.py`: shared defaults and configuration
-- `annealing.py`: simulated annealing state and acceptance logic
-- `annealing_schedules.py`: cooling schedules
-- `annealing_objectives.py`: layout evaluation objectives
-- `annealing_runner.py`: simulated annealing execution and history
-- `experiment_builder.py`: experiment dataclasses and builder-related definitions
-- `experiment_runner.py`: multi-seed execution, manual training runs, and SA runs
-- `search_spaces.py`: discrete search spaces for grid/random search
-- `results_store.py`: JSON storage and loading
-- `results_analysis.py`: aggregation and ranking across seeds and configurations
-- `experiment_plots.py`: plots for builder analyses
+- `ui_qt/`: Qt shell, workspaces, widgets, and table models
+- `services/`: GUI-neutral orchestration and didactic payload builders
+- `cli/`: parser, interactive assistant, and command handlers
+- `model.py`, `trainer.py`, `activations.py`, `benchmarks.py`: model and training core
+- `annealing*.py`: simulated annealing core
+- `experiment_*.py`, `results_*.py`, `search_spaces.py`: experiment execution and storage
+- `tests/`: CLI, service, Qt widget, and smoke coverage
 
 ## Documentation
 
-- `docs/HANDBOOK.md`: end-to-end usage guide for all three GUI modes
-- `docs/ARCHITECTURE.md`: codebase structure, data flow, training, SA, and stored results
-- `docs/EXPERIMENT_RECIPES.md`: concrete experiment ideas and starter workflows
-
-## Current Scope
-
-This is the first base project of the repository. It already covers model building, layout editing, visualization, training, and simulated annealing over activation layouts, while keeping the codebase modular enough for further optimization methods later on.
+- [Handbook](docs/HANDBOOK.md): user-facing learning guide, plot interpretation, recipes
+- [Architecture](docs/ARCHITECTURE.md): current Qt/service/CLI architecture

@@ -33,19 +33,20 @@ class TrainingResult:
     test_metrics: dict[str, float]
 
 
-def train_model(
-    model: ModularMLP, dataset: DatasetBundle, config: TrainingConfig
-) -> TrainingResult:
-    """Trainiert das Modell mit Mini-Batch Gradient Descent.
+@dataclass(frozen=True)
+class EpochUpdate:
+    """Zwischenstand nach genau einer Trainings-Epoche."""
 
-    Pro Epoche passiert:
-    1. Trainingsdaten in Batches zerlegen
-    2. Fuer jeden Batch: Loss + Gradienten berechnen
-    3. Gewichte aktualisieren
-    4. Am Ende der Epoche Train- und Val-Metriken messen
-    5. Nach allen Epochen final auf dem Test-Split auswerten
-    """
+    epoch_index: int
+    history_snapshot: dict[str, list[float]]
+    batch_loss: float
+    train_loss: float
+    val_loss: float
+    train_acc: float
+    val_acc: float
 
+
+def _validate_training_config(config: TrainingConfig) -> None:
     if config.epochs <= 0:
         raise ValueError("epochs muss positiv sein.")
     if config.learning_rate <= 0.0:
@@ -53,10 +54,9 @@ def train_model(
     if config.batch_size <= 0:
         raise ValueError("batch_size muss positiv sein.")
 
-    rng = np.random.default_rng(config.random_state)
 
-    # `history` speichert Verlaufskurven fuer spaetere ASCII- und Plot-Ausgaben.
-    history = {
+def empty_history() -> dict[str, list[float]]:
+    return {
         "batch_loss": [],
         "train_loss": [],
         "val_loss": [],
@@ -64,7 +64,32 @@ def train_model(
         "val_acc": [],
     }
 
-    for _epoch in range(config.epochs):
+
+def copy_history(history: dict[str, list[float]] | None) -> dict[str, list[float]]:
+    if history is None:
+        return empty_history()
+    return {
+        "batch_loss": list(history.get("batch_loss", [])),
+        "train_loss": list(history.get("train_loss", [])),
+        "val_loss": list(history.get("val_loss", [])),
+        "train_acc": list(history.get("train_acc", [])),
+        "val_acc": list(history.get("val_acc", [])),
+    }
+
+
+def iterate_training_epochs(
+    model: ModularMLP,
+    dataset: DatasetBundle,
+    config: TrainingConfig,
+    history: dict[str, list[float]] | None = None,
+):
+    """Trainiert epochweise und liefert nach jeder Epoche einen Zwischenstand."""
+
+    _validate_training_config(config)
+    rng = np.random.default_rng(config.random_state)
+    working_history = copy_history(history)
+
+    for epoch_offset in range(config.epochs):
         batch_losses: list[float] = []
 
         for X_batch, y_batch in iterate_minibatches(
@@ -78,22 +103,64 @@ def train_model(
             model.apply_gradients(gradients, config.learning_rate)
             batch_losses.append(batch_loss)
 
-        # Nach jeder Epoche messen wir direkt, wie das Modell auf Train und
-        # Validation steht. Das ist fuer Lernkurven und Fehlersuche hilfreich.
         train_loss, train_acc = model.evaluate(dataset.X_train, dataset.y_train)
         val_loss, val_acc = model.evaluate(dataset.X_val, dataset.y_val)
+        batch_mean = float(np.mean(batch_losses))
 
-        history["batch_loss"].append(float(np.mean(batch_losses)))
-        history["train_loss"].append(train_loss)
-        history["val_loss"].append(val_loss)
-        history["train_acc"].append(train_acc)
-        history["val_acc"].append(val_acc)
+        working_history["batch_loss"].append(batch_mean)
+        working_history["train_loss"].append(train_loss)
+        working_history["val_loss"].append(val_loss)
+        working_history["train_acc"].append(train_acc)
+        working_history["val_acc"].append(val_acc)
 
+        yield EpochUpdate(
+            epoch_index=epoch_offset,
+            history_snapshot=copy_history(working_history),
+            batch_loss=batch_mean,
+            train_loss=train_loss,
+            val_loss=val_loss,
+            train_acc=train_acc,
+            val_acc=val_acc,
+        )
+
+
+def train_model_with_callback(
+    model: ModularMLP,
+    dataset: DatasetBundle,
+    config: TrainingConfig,
+    on_epoch,
+    history: dict[str, list[float]] | None = None,
+) -> TrainingResult:
+    """Trainiert das Modell und ruft nach jeder Epoche einen Callback auf."""
+
+    final_history = copy_history(history)
+    for update in iterate_training_epochs(model, dataset, config, history=history):
+        final_history = update.history_snapshot
+        on_epoch(update)
     test_loss, test_acc = model.evaluate(dataset.X_test, dataset.y_test)
     return TrainingResult(
-        history=history,
+        history=final_history,
         test_metrics={"loss": test_loss, "accuracy": test_acc},
     )
+
+
+def train_model(
+    model: ModularMLP, dataset: DatasetBundle, config: TrainingConfig
+) -> TrainingResult:
+    """Trainiert das Modell mit Mini-Batch Gradient Descent.
+
+    Pro Epoche passiert:
+    1. Trainingsdaten in Batches zerlegen
+    2. Fuer jeden Batch: Loss + Gradienten berechnen
+    3. Gewichte aktualisieren
+    4. Am Ende der Epoche Train- und Val-Metriken messen
+    5. Nach allen Epochen final auf dem Test-Split auswerten
+    """
+
+    updates = list(iterate_training_epochs(model, dataset, config))
+    history = updates[-1].history_snapshot if updates else empty_history()
+    test_loss, test_acc = model.evaluate(dataset.X_test, dataset.y_test)
+    return TrainingResult(history=history, test_metrics={"loss": test_loss, "accuracy": test_acc})
 
 
 def iterate_minibatches(
