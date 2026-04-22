@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from activations import generate_single_step_neighbors
 from configs import DatasetConfig, TrainingConfig, VisualizationConfig, default_hidden_sizes
+from runtime_env import configure_runtime_environment
 from services.training_service import TrainingRunRequest, run_single_training_experiment
 from terminal_viz import (
     render_dataset_summary,
@@ -90,7 +90,7 @@ def _show_or_save_plots(
 ) -> None:
     """Erzeugt Matplotlib-Plots und speichert oder zeigt sie an."""
 
-    os.environ.setdefault("MPLCONFIGDIR", str(Path(".mplconfig")))
+    configure_runtime_environment()
 
     import matplotlib.pyplot as plt
 

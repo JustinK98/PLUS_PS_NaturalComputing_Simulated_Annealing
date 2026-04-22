@@ -9,7 +9,12 @@ from services.help_service import program_handbook_html
 from ui_qt.state import AppState, WorkspacePreferences
 from ui_qt.texts import text
 from ui_qt.widgets.help_dialog import HelpDialog
-from ui_qt.workspaces import DemoWorkspace, ExperimentBuilderWorkspace, PlaygroundWorkspace
+from ui_qt.workspaces import (
+    DemoWorkspace,
+    ExperimentBuilderWorkspace,
+    PlaygroundWorkspace,
+    PresentationWorkspace,
+)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -27,7 +32,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handbook_dialog: HelpDialog | None = None
 
         self.workspace_combo = QtWidgets.QComboBox()
-        self.workspace_combo.addItems(("demo", "playground", "experiment_builder"))
+        self.workspace_combo.addItems(("presentation", "demo", "playground", "experiment_builder"))
         self.workspace_combo.setCurrentText(config.app_mode)
         self.workspace_combo.currentTextChanged.connect(self._on_workspace_changed)
 
@@ -61,6 +66,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stack = QtWidgets.QStackedWidget()
         self.setCentralWidget(self.stack)
         self.workspaces = {
+            "presentation": PresentationWorkspace(config, self.state.preferences, self),
             "demo": DemoWorkspace(config, self.state.preferences, self),
             "playground": PlaygroundWorkspace(config, self.state.preferences, self),
             "experiment_builder": ExperimentBuilderWorkspace(config, self.state.preferences, self),

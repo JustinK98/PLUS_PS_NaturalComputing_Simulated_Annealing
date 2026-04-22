@@ -3,4 +3,5 @@
 .venv/
 __pycache__/
 outputs/
+Selfie_Justin_Klein/
 *.pyc

@@ -19,6 +19,16 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(args.gui_mode, "expert")
         self.assertEqual(args.gui_language, "en")
 
+    def test_presentation_mode_is_valid_gui_mode(self) -> None:
+        args = self.parser.parse_args(["gui", "--mode", "presentation"])
+        self.assertEqual(resolve_command(args), "gui")
+        self.assertEqual(args.gui_app_mode, "presentation")
+
+        normalized = _normalize_compat_argv(["--mode", "presentation"])
+        args = self.parser.parse_args(normalized)
+        self.assertEqual(resolve_command(args), "gui")
+        self.assertEqual(args.gui_app_mode, "presentation")
+
     def test_legacy_gui_flag_maps_to_gui_command(self) -> None:
         normalized = _normalize_compat_argv(["--gui", "--gui-app-mode", "playground"])
         args = self.parser.parse_args(normalized)

@@ -8,15 +8,17 @@ import sys
 from PySide6 import QtCore, QtWidgets
 
 from configs import GuiExperimentConfig
+from runtime_env import configure_runtime_environment
 from ui_qt.shell.main_window import MainWindow
 from ui_qt.theme import apply_theme
+
+configure_runtime_environment()
 
 
 def launch_qt_gui(config: GuiExperimentConfig) -> None:
     """Startet die Qt-Oberfläche und blockiert bis zum Schließen."""
 
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
-    os.environ.setdefault("MPLCONFIGDIR", os.path.abspath(".mplconfig"))
     app = QtWidgets.QApplication.instance()
     owns_app = app is None
     if app is None:

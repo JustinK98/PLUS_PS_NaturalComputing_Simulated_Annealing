@@ -26,6 +26,11 @@ class TaskRunnerTests(unittest.TestCase):
         runner.start(lambda: time.sleep(0.2))
         with self.assertRaises(RuntimeError):
             runner.start(lambda: 1)
+        outcome = runner.wait(timeout=1.0)
+        self.assertIsNotNone(outcome)
+        assert outcome is not None
+        self.assertEqual(outcome.status, "completed")
+        self.assertFalse(runner.is_running)
 
 
 if __name__ == "__main__":

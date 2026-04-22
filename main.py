@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 import sys
 
+from runtime_env import configure_runtime_environment
+
+configure_runtime_environment()
+
 from cli.commands.experiment_analyze import analyze_experiment_command
 from cli.commands.experiment_run import run_experiment_command
 from cli.commands.experiment_template import create_experiment_template_command

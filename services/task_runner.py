@@ -43,14 +43,29 @@ class BackgroundTaskRunner:
             except BaseException as exc:  # pragma: no cover - defensive thread wrapper
                 self._queue.put(TaskOutcome(status="failed", error=exc))
 
-        self._thread = Thread(target=_worker, daemon=True)
+        self._thread = Thread(target=_worker)
         self._thread.start()
 
     def poll(self) -> TaskOutcome | None:
         """Liefert ein fertiges Ergebnis, falls eines vorliegt."""
 
         try:
-            return self._queue.get_nowait()
+            outcome = self._queue.get_nowait()
         except Empty:
             return None
+        self._join_finished_thread()
+        return outcome
 
+    def wait(self, timeout: float | None = None) -> TaskOutcome | None:
+        """Wartet optional auf den aktuellen Task und liefert dessen Ergebnis."""
+
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout)
+        return self.poll()
+
+    def _join_finished_thread(self) -> None:
+        thread = self._thread
+        if thread is not None and not thread.is_alive():
+            thread.join(timeout=0)
+            self._thread = None

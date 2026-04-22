@@ -21,6 +21,7 @@ Start the GUI directly:
 python main.py gui --mode demo
 python main.py gui --mode playground
 python main.py gui --mode experiment_builder
+python main.py gui --mode presentation
 ```
 
 Useful GUI options:
@@ -74,6 +75,15 @@ python main.py --show-layout-help
 - bilingual Qt GUI in German and English
 
 ## Main Workspaces
+
+### Presentation
+
+Use `Presentation` for a guided 10-15 minute live explanation:
+
+- choose between Neural Network Preview and Simulated Annealing Preview
+- click through one concept per slide
+- use fixed `breast_cancer` defaults for a reliable demo
+- show formulas, network visuals, training plots, and annealing decisions without the full tool UI
 
 ### Demo
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -20,6 +21,7 @@ from ui_qt.state import WorkspacePreferences
 from ui_qt.workspaces.demo_workspace import DemoWorkspace
 from ui_qt.workspaces.experiment_builder_workspace import ExperimentBuilderWorkspace
 from ui_qt.workspaces.playground_workspace import PlaygroundWorkspace
+from ui_qt.workspaces.presentation_workspace import PresentationWorkspace
 
 
 def _app() -> QtWidgets.QApplication:
@@ -29,12 +31,20 @@ def _app() -> QtWidgets.QApplication:
     return app
 
 
+def _wait_until(app: QtWidgets.QApplication, predicate, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+
+
 class QtSmokeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = _app()
 
-    def test_main_window_boots_with_three_workspaces(self) -> None:
+    def test_main_window_boots_with_four_workspaces(self) -> None:
         window = MainWindow(
             GuiExperimentConfig(
                 benchmark="wine",
@@ -45,8 +55,66 @@ class QtSmokeTests(unittest.TestCase):
                 language="en",
             )
         )
-        self.assertEqual(len(window.workspaces), 3)
+        self.assertEqual(len(window.workspaces), 4)
+        self.assertIn("presentation", window.workspaces)
         window.close()
+
+    def test_presentation_workspace_tracks_can_advance(self) -> None:
+        workspace = PresentationWorkspace(
+            GuiExperimentConfig(
+                benchmark="breast_cancer",
+                hidden_sizes=(8, 4),
+                app_mode="presentation",
+                layout_spec="relu|relu",
+                mode="beginner",
+                language="en",
+            ),
+            WorkspacePreferences(language="en", detail_mode="beginner"),
+        )
+        workspace._start_track("neural_network")
+        self.assertEqual(workspace.track_id, "neural_network")
+        for _ in range(6):
+            workspace._next_slide()
+        self.assertEqual(workspace.slide_index, 6)
+        workspace.slide_index = 3
+        before_activation = workspace.runtime_state.model.layout.layers[0][0]
+        workspace._run_slide_action()
+        self.assertNotEqual(workspace.runtime_state.model.layout.layers[0][0], before_activation)
+        workspace._on_activation_lab_selection_changed(1, 2)
+        workspace._on_activation_lab_changed(1, 2, "sigmoid")
+        self.assertEqual(workspace.runtime_state.selected_hidden, (1, 2))
+        self.assertEqual(workspace.runtime_state.model.layout.layers[1][2], "sigmoid")
+        workspace._start_track("simulated_annealing")
+        workspace._run_annealing_action("evaluate_start")
+        _wait_until(
+            self.app,
+            lambda: workspace.annealing_snapshot is not None
+            and workspace.annealing_snapshot.is_initialized,
+        )
+        self.assertIsNotNone(workspace.annealing_snapshot)
+        workspace._run_annealing_action("step_10")
+        _wait_until(
+            self.app,
+            lambda: workspace.annealing_snapshot is not None
+            and len(workspace.annealing_snapshot.history) >= 1,
+        )
+        self.assertIsNotNone(workspace.annealing_snapshot)
+        workspace._run_annealing_action("run_to_completion")
+        _wait_until(
+            self.app,
+            lambda: workspace.annealing_snapshot is not None
+            and workspace.annealing_snapshot.is_complete,
+        )
+        self.assertIsNotNone(workspace.annealing_snapshot)
+        assert workspace.annealing_snapshot is not None
+        self.assertTrue(workspace.annealing_snapshot.is_complete)
+        workspace.slide_index = 6
+        workspace._refresh_slide()
+        workspace._reset_current_track()
+        self.assertEqual(workspace.track_id, "simulated_annealing")
+        self.assertEqual(workspace.slide_index, 0)
+        self.assertIsNone(workspace.annealing_snapshot)
+        workspace.close()
 
     def test_demo_workspace_training_smoke(self) -> None:
         workspace = DemoWorkspace(

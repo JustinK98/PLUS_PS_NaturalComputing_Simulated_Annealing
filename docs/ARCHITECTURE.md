@@ -41,6 +41,7 @@ The codebase is split into four practical layers:
 - `python main.py gui --mode demo`
 - `python main.py gui --mode playground`
 - `python main.py gui --mode experiment_builder`
+- `python main.py gui --mode presentation`
 
 Qt startup lives in:
 
@@ -134,6 +135,12 @@ Qt startup lives in:
   - global handbook window
 
 ### Workspaces
+
+- `ui_qt/workspaces/presentation_workspace.py`
+  - guided slide-first presentation mode
+  - neural-network preview track
+  - simulated-annealing preview track
+  - fixed Breast Cancer defaults for live demos
 
 - `ui_qt/workspaces/demo_workspace.py`
   - sample inspection

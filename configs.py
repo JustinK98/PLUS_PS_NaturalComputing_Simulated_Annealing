@@ -28,7 +28,7 @@ SUPPORTED_BENCHMARKS = ("breast_cancer", "wine", "digits", "test_activation")
 SUPPORTED_ACTIVATIONS = ("relu", "tanh", "sigmoid", "leaky_relu")
 SUPPORTED_GUI_MODES = ("beginner", "expert")
 SUPPORTED_GUI_LANGUAGES = ("de", "en")
-SUPPORTED_GUI_APP_MODES = ("demo", "playground", "experiment_builder")
+SUPPORTED_GUI_APP_MODES = ("presentation", "demo", "playground", "experiment_builder")
 
 
 # Standardwerte fuer einen schnellen Einstieg.

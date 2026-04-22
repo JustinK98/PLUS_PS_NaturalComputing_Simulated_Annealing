@@ -17,7 +17,27 @@ It lets you:
 
 The same core model and benchmark pipeline is reused across all modes.
 
-## 2. The Three GUI Modes
+## 2. The GUI Modes
+
+### Presentation Mode
+
+Use Presentation Mode when you want to explain the project live without exposing all expert controls.
+
+Typical use:
+
+- choose `Neural Network Preview` for a 5-7 minute explanation of one concrete model
+- choose `Simulated Annealing Preview` for a 5-7 minute explanation of the search process
+- click through the slides from problem statement to takeaway
+
+Best for:
+
+- classroom demos
+- oral presentations
+- first contact before opening Demo or Playground Mode
+
+Presentation Mode uses fixed `breast_cancer` defaults so that the visual story remains stable.
+
+For the prepared talk flow, use [PRESENTATION_SCRIPT.md](PRESENTATION_SCRIPT.md). It contains slide-by-slide speaker text, click instructions, and a fallback route for the live demo.
 
 ### Demo Mode
 

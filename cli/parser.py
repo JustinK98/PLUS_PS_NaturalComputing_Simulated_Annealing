@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="gui_app_mode",
         choices=SUPPORTED_GUI_APP_MODES,
         default=DEFAULT_GUI_APP_MODE,
-        help="GUI-Arbeitsmodus: demo, playground oder experiment_builder.",
+        help="GUI-Arbeitsmodus: presentation, demo, playground oder experiment_builder.",
     )
     gui_parser.add_argument(
         "--detail-level",

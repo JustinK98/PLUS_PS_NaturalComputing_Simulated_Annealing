@@ -17,6 +17,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from runtime_env import configure_runtime_environment
+
+configure_runtime_environment()
+
 try:
     import numpy as np
 except ImportError as exc:
