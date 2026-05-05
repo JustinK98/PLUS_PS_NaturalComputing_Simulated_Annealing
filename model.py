@@ -27,6 +27,7 @@ from activations import (
     apply_activation_derivatives,
     apply_activation_layout,
     parse_layout_spec,
+    sigmoid,
 )
 
 
@@ -41,6 +42,7 @@ class ForwardCache:
     pre_activations: tuple[Array, ...]
     activations: tuple[Array, ...]
     logits: Array
+    output_values: Array
     probabilities: Array
 
     @property
@@ -145,11 +147,14 @@ class ModularMLP:
         hidden_sizes: tuple[int, ...],
         output_size: int,
         layout: ActivationLayout,
+        num_classes: int | None = None,
         weight_scale: float = 0.05,
         random_state: int = 42,
     ) -> None:
         if not hidden_sizes:
             raise ValueError("Das Modell erwartet mindestens einen Hidden-Layer.")
+        if output_size <= 0:
+            raise ValueError("Das Modell erwartet mindestens ein Output-Neuron.")
         if tuple(hidden_sizes) != layout.hidden_sizes:
             raise ValueError(
                 "Hidden-Sizes und Aktivierungs-Layout passen nicht zusammen. "
@@ -159,7 +164,14 @@ class ModularMLP:
         self.input_size = input_size
         self.hidden_sizes = tuple(hidden_sizes)
         self.output_size = output_size
+        self.num_classes = num_classes if num_classes is not None else output_size
         self.layout = layout
+        self.uses_binary_output = self.output_size == 1 and self.num_classes == 2
+
+        if self.uses_binary_output is False and self.output_size != self.num_classes:
+            raise ValueError(
+                "Nicht-binaere Modelle erwarten gleich viele Output-Neuronen wie Klassen."
+            )
 
         rng = np.random.default_rng(random_state)
         layer_sizes = (input_size, *self.hidden_sizes, output_size)
@@ -210,6 +222,7 @@ class ModularMLP:
             hidden_sizes=self.hidden_sizes,
             output_size=self.output_size,
             layout=self.layout,
+            num_classes=self.num_classes,
             weight_scale=1.0,
             random_state=0,
         )
@@ -224,6 +237,7 @@ class ModularMLP:
             "input_size": self.input_size,
             "hidden_sizes": list(self.hidden_sizes),
             "output_size": self.output_size,
+            "num_classes": self.num_classes,
             "layout_spec": self.layout.to_compact_spec(),
             "weights": [weight_matrix.tolist() for weight_matrix in self.weights],
             "biases": [bias_vector.tolist() for bias_vector in self.biases],
@@ -240,6 +254,7 @@ class ModularMLP:
             hidden_sizes=hidden_sizes,
             output_size=int(payload["output_size"]),  # type: ignore[index]
             layout=layout,
+            num_classes=int(payload.get("num_classes", payload["output_size"])),  # type: ignore[index]
             weight_scale=1.0,
             random_state=0,
         )
@@ -303,13 +318,23 @@ class ModularMLP:
             activations.append(current_values)
 
         logits = current_values @ self.weights[-1] + self.biases[-1]
-        probabilities = softmax(logits)
+        if self.uses_binary_output:
+            positive_probabilities = sigmoid(logits)
+            probabilities = np.concatenate(
+                [1.0 - positive_probabilities, positive_probabilities],
+                axis=1,
+            )
+            output_values = positive_probabilities
+        else:
+            probabilities = softmax(logits)
+            output_values = probabilities
 
         return ForwardCache(
             X=X,
             pre_activations=tuple(pre_activations),
             activations=tuple(activations),
             logits=logits,
+            output_values=output_values,
             probabilities=probabilities,
         )
 
@@ -328,11 +353,15 @@ class ModularMLP:
 
         cache = self.forward(X)
         batch_size = X.shape[0]
-        loss = cross_entropy_loss(cache.probabilities, y)
-
-        dlogits = cache.probabilities.copy()
-        dlogits[np.arange(batch_size), y] -= 1.0
-        dlogits /= batch_size
+        if self.uses_binary_output:
+            loss = binary_cross_entropy_loss(cache.output_values, y)
+            dlogits = (cache.output_values[:, 0] - y.astype(np.float64)).reshape(-1, 1)
+            dlogits /= batch_size
+        else:
+            loss = cross_entropy_loss(cache.probabilities, y)
+            dlogits = cache.probabilities.copy()
+            dlogits[np.arange(batch_size), y] -= 1.0
+            dlogits /= batch_size
 
         weight_gradients: list[Array] = [np.zeros_like(weight_matrix) for weight_matrix in self.weights]
         bias_gradients: list[Array] = [np.zeros_like(bias_vector) for bias_vector in self.biases]
@@ -368,9 +397,14 @@ class ModularMLP:
     def evaluate(self, X: Array, y: Array) -> tuple[float, float]:
         """Berechnet Loss und Accuracy fuer einen Datensatzsplit."""
 
-        probabilities = self.predict_proba(X)
+        cache = self.forward(X)
+        probabilities = cache.probabilities
         predictions = np.argmax(probabilities, axis=1)
-        loss = cross_entropy_loss(probabilities, y)
+        loss = (
+            binary_cross_entropy_loss(cache.output_values, y)
+            if self.uses_binary_output
+            else cross_entropy_loss(probabilities, y)
+        )
         accuracy = float(np.mean(predictions == y))
         return loss, accuracy
 
@@ -485,10 +519,21 @@ class ModularMLP:
         backward_layers: list[BackwardLayerTrace] = []
 
         if target_index is not None:
-            dlogits = probabilities.copy()
-            dlogits[target_index] -= 1.0
-            loss = float(-np.log(max(probabilities[target_index], 1e-12)))
-            output_delta = tuple(float(value) for value in dlogits)
+            if self.uses_binary_output:
+                positive_probability = float(cache.output_values[0, 0])
+                dlogits = np.asarray([[positive_probability - float(target_index)]], dtype=np.float64)
+                loss = float(
+                    binary_cross_entropy_loss(
+                        np.asarray([[positive_probability]], dtype=np.float64),
+                        np.asarray([target_index], dtype=np.int64),
+                    )
+                )
+                output_delta = tuple(float(value) for value in dlogits[0])
+            else:
+                dlogits = probabilities.copy()
+                dlogits[target_index] -= 1.0
+                loss = float(-np.log(max(probabilities[target_index], 1e-12)))
+                output_delta = tuple(float(value) for value in dlogits)
             backward_layers.append(
                 BackwardLayerTrace(
                     layer_label="Output",
@@ -543,3 +588,13 @@ def cross_entropy_loss(probabilities: Array, y_true: Array) -> float:
     clipped = np.clip(probabilities, 1e-12, 1.0)
     correct_class_probabilities = clipped[np.arange(len(y_true)), y_true]
     return float(-np.mean(np.log(correct_class_probabilities)))
+
+
+def binary_cross_entropy_loss(probabilities: Array, y_true: Array) -> float:
+    """Mittlere Binary Cross-Entropy ueber einen Batch mit positivem Klassen-Output."""
+
+    clipped = np.clip(probabilities[:, 0], 1e-12, 1.0 - 1e-12)
+    y_true_float = y_true.astype(np.float64)
+    return float(
+        -np.mean(y_true_float * np.log(clipped) + (1.0 - y_true_float) * np.log(1.0 - clipped))
+    )

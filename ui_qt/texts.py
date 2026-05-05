@@ -6,6 +6,7 @@ from __future__ import annotations
 TEXTS = {
     "de": {
         "workspace.demo": "Demo",
+        "workspace.workflow": "Activation Workflow",
         "workspace.playground": "Playground",
         "workspace.builder": "Experiment Builder",
         "detail.beginner": "Beginner",
@@ -60,6 +61,7 @@ TEXTS = {
     },
     "en": {
         "workspace.demo": "Demo",
+        "workspace.workflow": "Activation Workflow",
         "workspace.playground": "Playground",
         "workspace.builder": "Experiment Builder",
         "detail.beginner": "Beginner",
@@ -116,25 +118,25 @@ TEXTS = {
 
 
 RECIPES = {
-    "relu_vs_tanh_wine": {
-        "title": {"de": "ReLU vs. Tanh auf wine", "en": "ReLU vs Tanh on wine"},
+    "relu_vs_tanh_iris": {
+        "title": {"de": "ReLU vs. Tanh auf iris", "en": "ReLU vs Tanh on iris"},
         "body": {
-            "de": "Vergleiche zwei kleine Layouts auf wine mit identischen Seeds. Beobachte Val-Accuracy und ob tanh stabiler, aber langsamer konvergiert.",
-            "en": "Compare two small layouts on wine with identical seeds. Watch validation accuracy and whether tanh converges more smoothly but more slowly.",
+            "de": "Vergleiche zwei kleine Layouts auf iris mit identischen Seeds. Beobachte Val-Accuracy und ob tanh stabiler, aber langsamer konvergiert.",
+            "en": "Compare two small layouts on iris with identical seeds. Watch validation accuracy and whether tanh converges more smoothly but more slowly.",
         },
     },
-    "digits_layout_compare": {
-        "title": {"de": "Layout-Vergleich auf digits", "en": "Layout comparison on digits"},
+    "circles_layout_compare": {
+        "title": {"de": "Layout-Vergleich auf concentric_circles", "en": "Layout comparison on concentric_circles"},
         "body": {
-            "de": "Nutze digits mit 32/16 Hidden-Neuronen und vergleiche homogene vs. gemischte Aktivierungen.",
-            "en": "Use digits with 32/16 hidden neurons and compare homogeneous versus mixed activations.",
+            "de": "Nutze concentric_circles mit 8 Hidden-Neuronen und vergleiche homogene vs. gemischte Aktivierungen.",
+            "en": "Use concentric_circles with 8 hidden neurons and compare homogeneous versus mixed activations.",
         },
     },
     "sa_homogeneous_relu": {
         "title": {"de": "SA von homogener ReLU-Basis", "en": "SA from homogeneous ReLU baseline"},
         "body": {
-            "de": "Starte SA mit relu|relu und beobachte, ob einzelne Layer oder Neuronen in andere Aktivierungen kippen.",
-            "en": "Start SA from relu|relu and observe whether single layers or neurons move to other activations.",
+            "de": "Starte SA mit relu und beobachte, ob einzelne Neuronen in andere Aktivierungen kippen.",
+            "en": "Start SA from relu and observe whether single neurons move to other activations.",
         },
     },
     "multi_seed_compare": {

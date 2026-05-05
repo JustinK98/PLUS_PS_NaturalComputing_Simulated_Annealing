@@ -18,6 +18,7 @@ from services.experiment_service import load_saved_experiment
 from services.training_service import TrainingRunRequest, run_single_training_experiment
 from ui_qt.shell.main_window import MainWindow
 from ui_qt.state import WorkspacePreferences
+from ui_qt.workspaces.activation_workflow_workspace import ActivationWorkflowWorkspace
 from ui_qt.workspaces.demo_workspace import DemoWorkspace
 from ui_qt.workspaces.experiment_builder_workspace import ExperimentBuilderWorkspace
 from ui_qt.workspaces.playground_workspace import PlaygroundWorkspace
@@ -47,25 +48,44 @@ class QtSmokeTests(unittest.TestCase):
     def test_main_window_boots_with_four_workspaces(self) -> None:
         window = MainWindow(
             GuiExperimentConfig(
-                benchmark="wine",
-                hidden_sizes=(16, 8),
-                app_mode="demo",
-                layout_spec="relu|tanh",
+                benchmark="iris",
+                hidden_sizes=(8,),
+                app_mode="activation_workflow",
+                layout_spec="relu",
                 mode="expert",
                 language="en",
             )
         )
-        self.assertEqual(len(window.workspaces), 4)
+        self.assertEqual(len(window.workspaces), 5)
+        self.assertIn("activation_workflow", window.workspaces)
         self.assertIn("presentation", window.workspaces)
         window.close()
+
+    def test_activation_workflow_workspace_boots(self) -> None:
+        workspace = ActivationWorkflowWorkspace(
+            GuiExperimentConfig(
+                benchmark="concentric_circles",
+                hidden_sizes=(8,),
+                app_mode="activation_workflow",
+                layout_spec="relu",
+                epochs=2,
+                mode="expert",
+                language="en",
+            ),
+            WorkspacePreferences(language="en", detail_mode="expert"),
+        )
+        self.assertIsNotNone(workspace.dataset)
+        self.assertIsNotNone(workspace.current_model)
+        self.assertEqual(workspace.benchmark_combo.currentText(), "concentric_circles")
+        workspace.close()
 
     def test_presentation_workspace_tracks_can_advance(self) -> None:
         workspace = PresentationWorkspace(
             GuiExperimentConfig(
-                benchmark="breast_cancer",
-                hidden_sizes=(8, 4),
+                benchmark="concentric_circles",
+                hidden_sizes=(8,),
                 app_mode="presentation",
-                layout_spec="relu|relu",
+                layout_spec="relu",
                 mode="beginner",
                 language="en",
             ),
@@ -80,10 +100,10 @@ class QtSmokeTests(unittest.TestCase):
         before_activation = workspace.runtime_state.model.layout.layers[0][0]
         workspace._run_slide_action()
         self.assertNotEqual(workspace.runtime_state.model.layout.layers[0][0], before_activation)
-        workspace._on_activation_lab_selection_changed(1, 2)
-        workspace._on_activation_lab_changed(1, 2, "sigmoid")
-        self.assertEqual(workspace.runtime_state.selected_hidden, (1, 2))
-        self.assertEqual(workspace.runtime_state.model.layout.layers[1][2], "sigmoid")
+        workspace._on_activation_lab_selection_changed(0, 2)
+        workspace._on_activation_lab_changed(0, 2, "sigmoid")
+        self.assertEqual(workspace.runtime_state.selected_hidden, (0, 2))
+        self.assertEqual(workspace.runtime_state.model.layout.layers[0][2], "sigmoid")
         workspace._start_track("simulated_annealing")
         workspace._run_annealing_action("evaluate_start")
         _wait_until(
@@ -119,10 +139,10 @@ class QtSmokeTests(unittest.TestCase):
     def test_demo_workspace_training_smoke(self) -> None:
         workspace = DemoWorkspace(
             GuiExperimentConfig(
-                benchmark="test_activation",
-                hidden_sizes=(4, 3),
+                benchmark="concentric_circles",
+                hidden_sizes=(8,),
                 app_mode="demo",
-                layout_spec="relu|tanh",
+                layout_spec="relu",
                 mode="expert",
                 language="en",
             ),
@@ -130,10 +150,10 @@ class QtSmokeTests(unittest.TestCase):
         )
         artifacts = run_single_training_experiment(
             TrainingRunRequest(
-                dataset_config=DatasetConfig(name="test_activation", random_state=7),
-                hidden_sizes=(4, 3),
-                layout_spec="relu|tanh",
-                training_config=TrainingConfig(epochs=2, learning_rate=0.03, batch_size=4, random_state=7),
+                dataset_config=DatasetConfig(name="concentric_circles", random_state=7),
+                hidden_sizes=(8,),
+                layout_spec="relu",
+                training_config=TrainingConfig(epochs=2, learning_rate=0.03, batch_size=16, random_state=7),
                 weight_scale=0.05,
                 random_state=7,
             )
@@ -146,10 +166,10 @@ class QtSmokeTests(unittest.TestCase):
     def test_playground_workspace_sa_smoke(self) -> None:
         workspace = PlaygroundWorkspace(
             GuiExperimentConfig(
-                benchmark="test_activation",
-                hidden_sizes=(4, 3),
+                benchmark="concentric_circles",
+                hidden_sizes=(8,),
                 app_mode="playground",
-                layout_spec="relu|tanh",
+                layout_spec="relu",
                 mode="expert",
                 language="en",
             ),
@@ -157,14 +177,14 @@ class QtSmokeTests(unittest.TestCase):
         )
         session = create_session(
             AnnealingRunRequest(
-                dataset_config=DatasetConfig(name="test_activation", random_state=9),
-                hidden_sizes=(4, 3),
-                layout_spec="relu|tanh",
+                dataset_config=DatasetConfig(name="concentric_circles", random_state=9),
+                hidden_sizes=(8,),
+                layout_spec="relu",
                 objective_config=ObjectiveConfig(
                     objective_name="validation_loss",
                     candidate_epochs=2,
                     learning_rate=0.03,
-                    batch_size=4,
+                    batch_size=16,
                     weight_scale=0.05,
                     random_state=9,
                     shuffle=True,
@@ -190,10 +210,10 @@ class QtSmokeTests(unittest.TestCase):
     def test_builder_workspace_loads_saved_results(self) -> None:
         workspace = ExperimentBuilderWorkspace(
             GuiExperimentConfig(
-                benchmark="wine",
-                hidden_sizes=(16, 8),
+                benchmark="iris",
+                hidden_sizes=(8,),
                 app_mode="experiment_builder",
-                layout_spec="relu|relu",
+                layout_spec="relu",
                 mode="expert",
                 language="en",
             ),

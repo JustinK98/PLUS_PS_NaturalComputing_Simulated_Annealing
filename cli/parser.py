@@ -7,7 +7,6 @@ import argparse
 from configs import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_BENCHMARK,
-    DEFAULT_EPOCHS,
     DEFAULT_GUI_APP_MODE,
     DEFAULT_LAYOUT,
     DEFAULT_LEARNING_RATE,
@@ -84,7 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
         dest="gui_app_mode",
         choices=SUPPORTED_GUI_APP_MODES,
         default=DEFAULT_GUI_APP_MODE,
-        help="GUI-Arbeitsmodus: presentation, demo, playground oder experiment_builder.",
+        help=(
+            "GUI-Arbeitsmodus: activation_workflow, presentation, demo, "
+            "playground oder experiment_builder."
+        ),
     )
     gui_parser.add_argument(
         "--detail-level",
@@ -152,6 +154,88 @@ def build_parser() -> argparse.ArgumentParser:
     )
     experiment_template_parser.add_argument("--output", required=True, help="Zielpfad fuer die JSON-Datei.")
 
+    layout_grid_parser = experiment_subparsers.add_parser(
+        "layout-grid",
+        help="Trainiert ein Layout-Grid und speichert ein vortrainiertes Demo-Artefakt.",
+    )
+    layout_grid_parser.add_argument(
+        "--benchmark",
+        choices=SUPPORTED_BENCHMARKS,
+        default=DEFAULT_BENCHMARK,
+        help="Offizieller CSV-Benchmark.",
+    )
+    layout_grid_parser.add_argument(
+        "--hidden-sizes",
+        nargs="+",
+        type=int,
+        metavar="H",
+        help="Hidden-Sizes fuer das Grid. Ohne Angabe gilt der Benchmark-Default.",
+    )
+    layout_grid_parser.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        default=[DEFAULT_RANDOM_SEED],
+        help="Seeds fuer faire Multi-Seed-Auswertung.",
+    )
+    layout_grid_parser.add_argument("--epochs", type=int, default=None)
+    layout_grid_parser.add_argument("--lr", type=float, default=DEFAULT_LEARNING_RATE)
+    layout_grid_parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    layout_grid_parser.add_argument("--weight-scale", type=float, default=DEFAULT_WEIGHT_SCALE)
+    layout_grid_parser.add_argument("--seed", type=int, default=DEFAULT_RANDOM_SEED)
+    layout_grid_parser.add_argument(
+        "--primary-metric",
+        choices=("validation_loss", "validation_accuracy"),
+        default="validation_loss",
+    )
+    layout_grid_parser.add_argument(
+        "--max-candidates",
+        type=int,
+        default=None,
+        help="Optionales Limit fuer schnelle Demo-Suchen.",
+    )
+    layout_grid_parser.add_argument(
+        "--no-mixed",
+        action="store_true",
+        help="Nur homogene/per-layer Layouts testen, keine gemischten Layer.",
+    )
+    layout_grid_parser.add_argument(
+        "--top-k",
+        type=int,
+        default=8,
+        help="Wie viele Top-Layouts im Terminal ausgegeben werden.",
+    )
+    layout_grid_parser.add_argument(
+        "--output",
+        default=None,
+        help="Zielpfad. Default: outputs/layout_grids/<benchmark>_layout_grid.json",
+    )
+
+    report_parser = experiment_subparsers.add_parser(
+        "report",
+        help="Erzeuge CSV-/Plot-Artefakte fuer Bericht und Demo aus vorhandenen Ergebnissen.",
+    )
+    report_parser.add_argument(
+        "--output-dir",
+        default="outputs/report_assets",
+        help="Zielordner fuer Report-Artefakte.",
+    )
+    report_parser.add_argument(
+        "--layout-grid-dir",
+        default="outputs/layout_grids",
+        help="Ordner mit Layout-Grid-JSON-Dateien.",
+    )
+    report_parser.add_argument(
+        "--demo-sa-dir",
+        default="outputs/demo_sa",
+        help="Ordner mit Demo-SA-Ergebnissen.",
+    )
+    report_parser.add_argument(
+        "--neighborhood-summary",
+        default="outputs/neighborhood_grids/summary.csv",
+        help="CSV-Zusammenfassung der Neighborhood-Runs.",
+    )
+
     return parser
 
 
@@ -163,7 +247,7 @@ def resolve_command(args: argparse.Namespace) -> str:
     if args.command == "run":
         return "run"
     if args.command == "experiment":
-        return f"experiment_{args.experiment_command}"
+        return f"experiment_{args.experiment_command.replace('-', '_')}"
     if getattr(args, "gui", False):
         return "gui"
     return "run"
@@ -174,7 +258,9 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         "--benchmark",
         choices=SUPPORTED_BENCHMARKS,
         default=DEFAULT_BENCHMARK,
-        help="Datensatz: breast_cancer, wine, digits oder test_activation.",
+        help=(
+            "Offizieller CSV-Benchmark: concentric_circles, iris oder crossing_spirals."
+        ),
     )
     parser.add_argument(
         "--hidden-sizes",
@@ -200,7 +286,12 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_NEIGHBOR_PREVIEW,
         help="Wie viele Single-Step-Neighbors im Terminal gezeigt werden sollen.",
     )
-    parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS, help="Anzahl der Trainingsepochen.")
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Anzahl der Trainingsepochen. Ohne Angabe gilt der Benchmark-Default.",
+    )
     parser.add_argument("--lr", type=float, default=DEFAULT_LEARNING_RATE, help="Lernrate.")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Batch-Groesse.")
     parser.add_argument("--weight-scale", type=float, default=DEFAULT_WEIGHT_SCALE, help="Gewichtsskala.")

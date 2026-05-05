@@ -32,10 +32,10 @@ class HelpIntegrationQtTests(unittest.TestCase):
     def test_main_window_opens_handbook_dialog(self) -> None:
         window = MainWindow(
             GuiExperimentConfig(
-                benchmark="wine",
-                hidden_sizes=(16, 8),
+                benchmark="iris",
+                hidden_sizes=(8,),
                 app_mode="demo",
-                layout_spec="relu|tanh",
+                layout_spec="relu",
                 mode="expert",
                 language="en",
             )
@@ -50,10 +50,10 @@ class HelpIntegrationQtTests(unittest.TestCase):
     def test_demo_workspace_has_help_tab_and_info_buttons(self) -> None:
         workspace = DemoWorkspace(
             GuiExperimentConfig(
-                benchmark="digits",
-                hidden_sizes=(16, 8),
+                benchmark="iris",
+                hidden_sizes=(8,),
                 app_mode="demo",
-                layout_spec="relu|tanh",
+                layout_spec="relu",
                 mode="expert",
                 language="de",
             ),
@@ -69,10 +69,10 @@ class HelpIntegrationQtTests(unittest.TestCase):
     def test_playground_and_builder_have_real_help_tabs(self) -> None:
         playground = PlaygroundWorkspace(
             GuiExperimentConfig(
-                benchmark="test_activation",
-                hidden_sizes=(4, 3),
+                benchmark="concentric_circles",
+                hidden_sizes=(8,),
                 app_mode="playground",
-                layout_spec="relu|tanh",
+                layout_spec="relu",
                 mode="expert",
                 language="en",
             ),
@@ -80,10 +80,10 @@ class HelpIntegrationQtTests(unittest.TestCase):
         )
         builder = ExperimentBuilderWorkspace(
             GuiExperimentConfig(
-                benchmark="wine",
-                hidden_sizes=(16, 8),
+                benchmark="iris",
+                hidden_sizes=(8,),
                 app_mode="experiment_builder",
-                layout_spec="relu|relu",
+                layout_spec="relu",
                 mode="expert",
                 language="en",
             ),

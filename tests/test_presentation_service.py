@@ -12,7 +12,7 @@ from services.presentation_service import (
 
 
 class PresentationServiceTests(unittest.TestCase):
-    def test_presentation_state_uses_reproducible_breast_cancer_defaults(self) -> None:
+    def test_presentation_state_uses_reproducible_official_defaults(self) -> None:
         state = create_presentation_state("en")
         self.assertEqual(state.dataset.name, PRESENTATION_BENCHMARK)
         self.assertEqual(state.model.hidden_sizes, PRESENTATION_HIDDEN_SIZES)
@@ -23,7 +23,7 @@ class PresentationServiceTests(unittest.TestCase):
         training_config = presentation_training_config(10)
         self.assertEqual(training_config.epochs, 10)
         session = create_presentation_annealing_session()
-        self.assertEqual(session.request.dataset_config.name, "breast_cancer")
+        self.assertEqual(session.request.dataset_config.name, "concentric_circles")
         self.assertEqual(session.request.annealing_config.max_steps, 8)
         self.assertEqual(session.request.objective_config.objective_name, "validation_loss")
 

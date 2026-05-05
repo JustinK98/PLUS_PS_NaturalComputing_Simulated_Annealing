@@ -9,7 +9,7 @@ class HelpServiceTests(unittest.TestCase):
     def test_program_handbook_contains_global_structure(self) -> None:
         html = program_handbook_html("en")
         self.assertIn("Activation Playground Guide", html)
-        self.assertIn("Three workspaces", html)
+        self.assertIn("Main workspaces", html)
 
     def test_topic_html_contains_plot_explanation(self) -> None:
         html = topic_html("training_plot", "de")
@@ -17,9 +17,9 @@ class HelpServiceTests(unittest.TestCase):
         self.assertIn("Loss", html)
 
     def test_workspace_help_changes_with_workspace_and_benchmark(self) -> None:
-        html = workspace_help_html("playground", "digits", "en")
+        html = workspace_help_html("playground", "concentric_circles", "en")
         self.assertIn("Playground", html)
-        self.assertIn("8x8 image input", html)
+        self.assertIn("2 numeric inputs", html)
 
 
 if __name__ == "__main__":

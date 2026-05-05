@@ -59,12 +59,7 @@ def build_analysis_sample(
     actual_target_index: int | None
     source_label: str
 
-    if use_custom_sample and custom_raw_sample is not None and bundle.name == "digits":
-        raw_sample = np.asarray(custom_raw_sample, dtype=np.float64).copy()
-        actual_target_index = None
-        source_label = "Eigenes digits-Sample" if language == "de" else "Custom digits sample"
-        bounded_index = int(sample_index)
-    elif use_custom_sample and custom_raw_sample is not None and bundle.name == "test_activation":
+    if use_custom_sample and custom_raw_sample is not None and bundle.name == "test_activation":
         raw_sample = np.asarray(custom_raw_sample, dtype=np.float64).copy()
         actual_target_index = infer_test_activation_target(raw_sample)
         source_label = (
@@ -154,13 +149,6 @@ def build_test_activation_rows(
     ]
 
 
-def build_digit_matrix(raw_sample: np.ndarray) -> tuple[tuple[float, ...], ...]:
-    """Formt ein flaches digits-Sample in eine 8x8-Matrix um."""
-
-    array = np.asarray(raw_sample, dtype=np.float64).reshape(8, 8)
-    return tuple(tuple(float(value) for value in row) for row in array)
-
-
 def format_probability_lines(
     bundle: DatasetBundle,
     probabilities: np.ndarray,
@@ -171,4 +159,3 @@ def format_probability_lines(
         f"{bundle.target_names[index]}={float(probability):.3f}"
         for index, probability in enumerate(probabilities)
     )
-

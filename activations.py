@@ -23,7 +23,7 @@ except ImportError as exc:
         "Dieses Projekt benoetigt NumPy. Installation z. B. mit 'pip install numpy'."
     ) from exc
 
-from configs import SUPPORTED_ACTIVATIONS
+from configs import LEGACY_ACTIVATIONS, SUPPORTED_ACTIVATIONS
 
 
 Array = np.ndarray
@@ -64,6 +64,25 @@ def tanh_derivative(values: Array) -> Array:
     return 1.0 - tanh_values**2
 
 
+def gelu(values: Array) -> Array:
+    """GELU-Approximation nach Hendrycks/Gimpel mit tanh-Form."""
+
+    coefficient = np.sqrt(2.0 / np.pi)
+    inner = coefficient * (values + 0.044715 * values**3)
+    return 0.5 * values * (1.0 + np.tanh(inner))
+
+
+def gelu_derivative(values: Array) -> Array:
+    """Ableitung der tanh-basierten GELU-Approximation."""
+
+    coefficient = np.sqrt(2.0 / np.pi)
+    inner = coefficient * (values + 0.044715 * values**3)
+    tanh_inner = np.tanh(inner)
+    sech_squared = 1.0 - tanh_inner**2
+    inner_derivative = coefficient * (1.0 + 3.0 * 0.044715 * values**2)
+    return 0.5 * (1.0 + tanh_inner) + 0.5 * values * sech_squared * inner_derivative
+
+
 def sigmoid(values: Array) -> Array:
     """Sigmoid-Funktion mit Clipping fuer numerische Stabilitaet."""
 
@@ -90,32 +109,69 @@ def leaky_relu_derivative(values: Array) -> Array:
     return np.where(values > 0.0, 1.0, LEAKY_RELU_SLOPE)
 
 
+def swish(values: Array) -> Array:
+    """Swish: glatte, nichtlineare Aktivierung mit Sigmoid-Gating."""
+
+    return values * sigmoid(values)
+
+
+def swish_derivative(values: Array) -> Array:
+    """Ableitung von Swish."""
+
+    sigmoid_values = sigmoid(values)
+    return sigmoid_values + values * sigmoid_values * (1.0 - sigmoid_values)
+
+
+def identity(values: Array) -> Array:
+    """Identity-Aktivierung als lineare Durchleitung."""
+
+    return values
+
+
+def identity_derivative(values: Array) -> Array:
+    """Ableitung der Identity-Aktivierung."""
+
+    return np.ones_like(values, dtype=np.float64)
+
+
 ACTIVATIONS = {
     "relu": ActivationFunction("relu", relu, relu_derivative),
-    "tanh": ActivationFunction("tanh", tanh, tanh_derivative),
-    "sigmoid": ActivationFunction("sigmoid", sigmoid, sigmoid_derivative),
     "leaky_relu": ActivationFunction("leaky_relu", leaky_relu, leaky_relu_derivative),
+    "gelu": ActivationFunction("gelu", gelu, gelu_derivative),
+    "sigmoid": ActivationFunction("sigmoid", sigmoid, sigmoid_derivative),
+    "tanh": ActivationFunction("tanh", tanh, tanh_derivative),
+    "swish": ActivationFunction("swish", swish, swish_derivative),
+    "identity": ActivationFunction("identity", identity, identity_derivative),
 }
 
 ACTIVATION_SHORT_NAMES = {
     "relu": "REL",
-    "tanh": "TAN",
-    "sigmoid": "SIG",
     "leaky_relu": "LRE",
+    "gelu": "GEL",
+    "sigmoid": "SIG",
+    "tanh": "TAN",
+    "swish": "SWH",
+    "identity": "IDN",
 }
 
 ACTIVATION_COLORS = {
     "relu": "#3b82f6",
-    "tanh": "#ef4444",
-    "sigmoid": "#10b981",
     "leaky_relu": "#f59e0b",
+    "gelu": "#a855f7",
+    "sigmoid": "#10b981",
+    "tanh": "#ef4444",
+    "swish": "#8b5cf6",
+    "identity": "#64748b",
 }
 
 ACTIVATION_FORMULAS = {
     "relu": "a = max(0, z)",
-    "tanh": "a = tanh(z)",
-    "sigmoid": "a = 1 / (1 + exp(-z))",
     "leaky_relu": f"a = z falls z > 0, sonst {LEAKY_RELU_SLOPE} * z",
+    "gelu": "a = 0.5 * z * (1 + tanh(sqrt(2/pi) * (z + 0.044715*z^3)))",
+    "sigmoid": "a = 1 / (1 + exp(-z))",
+    "tanh": "a = tanh(z)",
+    "swish": "a = z / (1 + exp(-z))",
+    "identity": "a = z",
 }
 
 
@@ -300,7 +356,7 @@ def validate_activation_name(activation_name: str) -> None:
     """Prueft, ob ein Aktivierungsname im Projekt erlaubt ist."""
 
     if activation_name not in ACTIVATIONS:
-        supported = ", ".join(SUPPORTED_ACTIVATIONS)
+        supported = ", ".join((*SUPPORTED_ACTIVATIONS, *LEGACY_ACTIVATIONS))
         raise ValueError(
             f"Nicht unterstuetzte Aktivierung '{activation_name}'. Erlaubt sind: {supported}"
         )

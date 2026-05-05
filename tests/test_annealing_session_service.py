@@ -18,14 +18,14 @@ from services.annealing_session_service import (
 class AnnealingSessionServiceTests(unittest.TestCase):
     def _request(self) -> AnnealingRunRequest:
         return AnnealingRunRequest(
-            dataset_config=DatasetConfig(name="test_activation", random_state=9),
-            hidden_sizes=(4, 3),
-            layout_spec="relu|tanh",
+            dataset_config=DatasetConfig(name="concentric_circles", random_state=9),
+            hidden_sizes=(8,),
+            layout_spec="relu",
             objective_config=ObjectiveConfig(
                 objective_name="validation_loss",
                 candidate_epochs=2,
                 learning_rate=0.03,
-                batch_size=4,
+                batch_size=16,
                 weight_scale=0.05,
                 random_state=9,
                 shuffle=True,

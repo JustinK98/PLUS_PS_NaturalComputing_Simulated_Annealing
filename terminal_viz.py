@@ -26,6 +26,7 @@ def render_dataset_summary(bundle: DatasetBundle) -> str:
         f"Name:          {bundle.name}",
         f"Input-Features:{bundle.input_size:>5}",
         f"Klassen:       {bundle.output_size:>5}",
+        f"Output-Neur.:  {bundle.model_output_size:>5}",
         f"Train/Val/Test:{bundle.train_size:>5}/{bundle.validation_size:>3}/{bundle.test_size:>3}",
     ]
     return "\n".join(lines)

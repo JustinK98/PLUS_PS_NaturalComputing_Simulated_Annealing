@@ -26,8 +26,8 @@ class SamplePanelQtTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = _app()
 
-    def test_digits_sample_panel_shows_8x8_grid(self) -> None:
-        dataset = load_benchmark(DatasetConfig(name="digits", random_state=9))
+    def test_official_sample_panel_shows_feature_table(self) -> None:
+        dataset = load_benchmark(DatasetConfig(name="iris", random_state=9))
         sample = build_analysis_sample(dataset, "val", 0, language="en")
         panel = SamplePanelWidget(language="en")
         panel.set_sample(
@@ -35,14 +35,13 @@ class SamplePanelQtTests(unittest.TestCase):
                 dataset=dataset,
                 analysis_sample=sample,
                 prediction_name=dataset.target_names[0],
-                probabilities=[0.1] * dataset.output_size,
+                probabilities=[1.0 / dataset.output_size] * dataset.output_size,
             )
         )
 
-        self.assertIs(panel.stack.currentWidget(), panel.digits_widget)
-        self.assertEqual(panel.digits_widget.rowCount(), 8)
-        self.assertEqual(panel.digits_widget.columnCount(), 8)
-        self.assertIsNotNone(panel.digits_widget.item(0, 0))
+        self.assertIs(panel.stack.currentWidget(), panel.generic_table)
+        self.assertGreater(panel.generic_table.rowCount(), 0)
+        self.assertIsNotNone(panel.generic_table.item(0, 1))
         panel.close()
 
 

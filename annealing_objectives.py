@@ -80,8 +80,9 @@ class LayoutObjectiveEvaluator:
         model = ModularMLP(
             input_size=self.dataset.input_size,
             hidden_sizes=layout.hidden_sizes,
-            output_size=self.dataset.output_size,
+            output_size=self.dataset.model_output_size,
             layout=layout,
+            num_classes=self.dataset.output_size,
             weight_scale=self.config.weight_scale,
             random_state=self.config.random_state,
         )

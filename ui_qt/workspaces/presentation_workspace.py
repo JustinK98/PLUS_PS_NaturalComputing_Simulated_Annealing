@@ -455,16 +455,16 @@ class PresentationWorkspace(BaseWorkspace):
 
     def _refresh_layout_comparison(self) -> None:
         start_model = self._model_for_layout(PRESENTATION_LAYOUT)
-        target_layout = "relu,tanh,relu,relu,relu,relu,relu,relu|sigmoid,relu,tanh,relu"
+        target_layout = "relu*2,tanh*2,gelu*2,swish*2"
         target_model = self._model_for_layout(target_layout)
         projection_left = self._projection_for(start_model, (0, 0))
         projection_right = self._projection_for(target_model, (0, 1))
         description = (
-            "<b>Startlayout:</b> relu|relu<br>"
+            f"<b>Startlayout:</b> {PRESENTATION_LAYOUT}<br>"
             "<b>Beispielhaftes Ziellayout:</b> gemischte Aktivierungsverteilung.<br>"
             "SA sucht genau in diesem diskreten Raum nach Layouts, die nach kurzem Training besser validieren."
             if self.preferences.language == "de"
-            else "<b>Start layout:</b> relu|relu<br>"
+            else f"<b>Start layout:</b> {PRESENTATION_LAYOUT}<br>"
             "<b>Illustrative target layout:</b> mixed activation distribution.<br>"
             "SA searches this discrete space for layouts that validate better after short training."
         )
@@ -492,7 +492,7 @@ class PresentationWorkspace(BaseWorkspace):
             "Only one local choice changes. These small steps define the neighborhood."
         )
         self.neighbor_comparison_panel.set_models(
-            left_title="Current: relu|relu",
+            left_title=f"Current: {PRESENTATION_LAYOUT}",
             right_title="Candidate: set_neuron(L1:n0, tanh)",
             left_model=current_model,
             right_model=neighbor_model,
@@ -642,8 +642,9 @@ class PresentationWorkspace(BaseWorkspace):
         return ModularMLP(
             input_size=self.runtime_state.dataset.input_size,
             hidden_sizes=PRESENTATION_HIDDEN_SIZES,
-            output_size=self.runtime_state.dataset.output_size,
+            output_size=self.runtime_state.dataset.model_output_size,
             layout=parse_layout_spec(layout_spec, PRESENTATION_HIDDEN_SIZES),
+            num_classes=self.runtime_state.dataset.output_size,
             weight_scale=PRESENTATION_WEIGHT_SCALE,
             random_state=PRESENTATION_RANDOM_STATE,
         )
@@ -771,8 +772,9 @@ class PresentationWorkspace(BaseWorkspace):
         self.runtime_state.model = ModularMLP(
             input_size=self.runtime_state.dataset.input_size,
             hidden_sizes=PRESENTATION_HIDDEN_SIZES,
-            output_size=self.runtime_state.dataset.output_size,
+            output_size=self.runtime_state.dataset.model_output_size,
             layout=layout,
+            num_classes=self.runtime_state.dataset.output_size,
             weight_scale=PRESENTATION_WEIGHT_SCALE,
             random_state=PRESENTATION_RANDOM_STATE,
         )

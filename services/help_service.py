@@ -43,7 +43,7 @@ TOPICS: dict[str, dict[str, object]] = {
                     "Was du hier festlegst",
                     [
                         "Der Benchmark bestimmt Datensatz, Eingabedarstellung, Klassenzahl und Schwierigkeit.",
-                        "digits zeigt ein 8x8-Bild, wine und breast_cancer sind tabellarisch, test_activation ist ein minimales Rechenlabor.",
+                        "Offiziell genutzt werden concentric_circles, iris und crossing_spirals als CSV-Benchmarks des Basics-Teams.",
                     ],
                 ),
                 (
@@ -59,7 +59,7 @@ TOPICS: dict[str, dict[str, object]] = {
                     "What this controls",
                     [
                         "The benchmark determines the dataset, input representation, number of classes, and overall difficulty.",
-                        "digits is an 8x8 image task, wine and breast_cancer are tabular, and test_activation is a tiny computation lab.",
+                        "The official suite uses concentric_circles, iris, and crossing_spirals from the Basics team's CSV files.",
                     ],
                 ),
                 (
@@ -116,7 +116,7 @@ TOPICS: dict[str, dict[str, object]] = {
                 (
                     "Was das Layout beschreibt",
                     [
-                        "Jedes Hidden-Neuron bekommt eine Aktivierungsfunktion wie relu, tanh, sigmoid oder leaky_relu.",
+                        "Jedes Hidden-Neuron bekommt eine Aktivierungsfunktion wie relu, gelu, sigmoid, tanh, swish oder identity.",
                         "Das Layout bestimmt also nicht die Gewichte, sondern die Form der nichtlinearen Transformation im Netz.",
                     ],
                 ),
@@ -132,7 +132,7 @@ TOPICS: dict[str, dict[str, object]] = {
                 (
                     "What the layout describes",
                     [
-                        "Each hidden neuron receives an activation function such as relu, tanh, sigmoid, or leaky_relu.",
+                        "Each hidden neuron receives an activation function such as relu, gelu, sigmoid, tanh, swish, or identity.",
                         "The layout therefore does not define weights. It defines the nonlinear transform used inside the network.",
                     ],
                 ),
@@ -273,7 +273,7 @@ TOPICS: dict[str, dict[str, object]] = {
                     "Was du hier siehst",
                     [
                         "Die Netzansicht ist didaktisch reduziert. Nicht jede Eingabe muss als einzelner Knoten sichtbar sein.",
-                        "Bei digits siehst du das 8x8-Bild separat, waehrend das Netz links nur eine sinnvolle Projektion der wichtigsten Inputs zeigt.",
+                        "Bei groesseren CSV-Benchmarks zeigt das Netz nur eine sinnvolle Projektion relevanter Inputs.",
                     ],
                 ),
                 (
@@ -289,7 +289,7 @@ TOPICS: dict[str, dict[str, object]] = {
                     "What you see here",
                     [
                         "The network view is didactically reduced. Not every input must be shown as an explicit node.",
-                        "For digits, the 8x8 image is shown separately while the network uses a readable projection of the most relevant inputs.",
+                        "For larger CSV benchmarks, the network shows a readable projection of relevant inputs.",
                     ],
                 ),
                 (
@@ -964,17 +964,17 @@ def _benchmark_section(benchmark: str, language: str) -> tuple[str, list[str]]:
     section_title = "Aktueller Benchmark" if lang == "de" else "Current Benchmark"
     benchmark_lines = {
         "de": {
-            "wine": [
-                "13 numerische Eingaben, 3 Klassen.",
-                "Gut fuer erste Vergleiche, weil das Problem klein und uebersichtlich ist.",
+            "concentric_circles": [
+                "2 numerische Eingaben, 2 Klassen, offizieller Easy-Benchmark.",
+                "Gut fuer erste SA-Vergleiche, weil die Topologie klein und die Entscheidung geometrisch anschaulich ist.",
             ],
-            "breast_cancer": [
-                "30 numerische Features, 2 Klassen.",
-                "Ein guter Benchmark, um Unsicherheit, Loss und binäre Trennungen zu beobachten.",
+            "iris": [
+                "4 numerische Eingaben, 3 Klassen, offizieller Medium-Benchmark.",
+                "Ein kompakter Mehrklassen-Benchmark fuer erste Vergleiche zwischen homogenen und gemischten Layouts.",
             ],
-            "digits": [
-                "8x8 Bildinput, 10 Klassen.",
-                "Hier sieht man sehr gut, wie Inputstruktur, Aktivierungen und Klassenausgabe zusammenspielen.",
+            "crossing_spirals": [
+                "6 numerische Eingaben, 2 Klassen, offizieller Hard-Benchmark.",
+                "Gut fuer robuste SA-Vergleiche, weil die Topologie zwei Hidden-Layer nutzt.",
             ],
             "test_activation": [
                 "Sehr kleiner kuenstlicher Datensatz mit Fokus auf Rechenwegen statt Benchmark-Staerke.",
@@ -982,17 +982,17 @@ def _benchmark_section(benchmark: str, language: str) -> tuple[str, list[str]]:
             ],
         },
         "en": {
-            "wine": [
-                "13 numeric inputs, 3 classes.",
-                "Good for early comparisons because the problem is small and readable.",
+            "concentric_circles": [
+                "2 numeric inputs, 2 classes, official easy benchmark.",
+                "Useful for first SA comparisons because the topology is small and the decision boundary is geometrically intuitive.",
             ],
-            "breast_cancer": [
-                "30 numeric features, 2 classes.",
-                "A good benchmark for uncertainty, loss behavior, and binary separation.",
+            "iris": [
+                "4 numeric inputs, 3 classes, official medium benchmark.",
+                "A compact multi-class benchmark for early comparisons between homogeneous and mixed layouts.",
             ],
-            "digits": [
-                "8x8 image input, 10 classes.",
-                "This is where input structure, activations, and class output become very visible together.",
+            "crossing_spirals": [
+                "6 numeric inputs, 2 classes, official hard benchmark.",
+                "Useful for robust SA comparisons because the topology uses two hidden layers.",
             ],
             "test_activation": [
                 "Very small artificial dataset focused on computation paths rather than benchmark strength.",
@@ -1000,7 +1000,7 @@ def _benchmark_section(benchmark: str, language: str) -> tuple[str, list[str]]:
             ],
         },
     }
-    lines = benchmark_lines[lang].get(benchmark, benchmark_lines[lang]["wine"])
+    lines = benchmark_lines[lang].get(benchmark, benchmark_lines[lang]["concentric_circles"])
     return section_title, lines
 
 
@@ -1164,8 +1164,11 @@ def program_handbook_html(language: str) -> str:
             ],
         ),
         (
-            "Three workspaces" if lang == "en" else "Drei Arbeitsmodi",
+            "Main workspaces" if lang == "en" else "Zentrale Arbeitsmodi",
             [
+                "Activation Workflow connects layout choice, manual training, simulated annealing, and final layout comparison."
+                if lang == "en"
+                else "Activation Workflow verbindet Layoutwahl, manuelles Training, Simulated Annealing und finalen Layout-Vergleich.",
                 "Demo explains one concrete model, one sample, and how training changes behavior."
                 if lang == "en"
                 else "Demo erklaert ein konkretes Modell, ein konkretes Sample und wie Training das Verhalten veraendert.",
@@ -1222,12 +1225,12 @@ def program_handbook_html(language: str) -> str:
         (
             "First experiments" if lang == "en" else "Erste sinnvolle Experimente",
             [
-                "Compare relu vs tanh on wine."
+                "Compare relu vs tanh on iris."
                 if lang == "en"
-                else "Vergleiche relu vs tanh auf wine.",
-                "Use digits to see how image structure and hidden activations interact."
+                else "Vergleiche relu vs tanh auf iris.",
+                "Use concentric_circles for the first complete SA workflow."
                 if lang == "en"
-                else "Nutze digits, um zu sehen, wie Bildstruktur und Hidden-Aktivierungen zusammenwirken.",
+                else "Nutze concentric_circles fuer den ersten vollstaendigen SA-Workflow.",
                 "Use test_activation to read local neuron computations without distraction."
                 if lang == "en"
                 else "Nutze test_activation, um lokale Neuron-Rechnungen ohne Ablenkung zu lesen.",

@@ -86,10 +86,10 @@ class NetworkViewQtTests(unittest.TestCase):
         preferences = WorkspacePreferences(language="en", detail_mode="expert")
         demo = DemoWorkspace(
             GuiExperimentConfig(
-                benchmark="wine",
-                hidden_sizes=(16, 8),
+                benchmark="iris",
+                hidden_sizes=(8,),
                 app_mode="demo",
-                layout_spec="relu|tanh",
+                layout_spec="relu",
                 mode="expert",
                 language="en",
             ),
@@ -97,10 +97,10 @@ class NetworkViewQtTests(unittest.TestCase):
         )
         playground = PlaygroundWorkspace(
             GuiExperimentConfig(
-                benchmark="test_activation",
-                hidden_sizes=(4, 3),
+                benchmark="concentric_circles",
+                hidden_sizes=(8,),
                 app_mode="playground",
-                layout_spec="relu|tanh",
+                layout_spec="relu",
                 mode="expert",
                 language="en",
             ),

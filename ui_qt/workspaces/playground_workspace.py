@@ -7,7 +7,7 @@ from PySide6 import QtCore, QtWidgets
 from annealing import AnnealingConfig
 from annealing_objectives import ObjectiveConfig
 from benchmarks import DatasetBundle, load_benchmark
-from configs import DatasetConfig, GuiExperimentConfig, default_hidden_sizes
+from configs import DatasetConfig, GuiExperimentConfig, SUPPORTED_BENCHMARKS, default_hidden_sizes
 from model import ModularMLP
 from services.annealing_session_service import (
     AnnealingSession,
@@ -78,7 +78,7 @@ class PlaygroundWorkspace(BaseWorkspace):
         self.problem_group = QtWidgets.QGroupBox()
         problem_layout = QtWidgets.QFormLayout(self.problem_group)
         self.benchmark_combo = QtWidgets.QComboBox()
-        self.benchmark_combo.addItems(("breast_cancer", "wine", "digits", "test_activation"))
+        self.benchmark_combo.addItems(SUPPORTED_BENCHMARKS)
         self.benchmark_combo.setCurrentText(self.config.benchmark)
         self.benchmark_combo.currentTextChanged.connect(self._on_benchmark_changed)
         self.hidden_sizes_edit = QtWidgets.QLineEdit(", ".join(str(v) for v in self.config.hidden_sizes))
@@ -361,8 +361,9 @@ class PlaygroundWorkspace(BaseWorkspace):
         self.preview_model = ModularMLP(
             input_size=self.dataset.input_size,
             hidden_sizes=self.layout_editor.hidden_sizes(),
-            output_size=self.dataset.output_size,
+            output_size=self.dataset.model_output_size,
             layout=self.layout_editor.current_layout(),
+            num_classes=self.dataset.output_size,
             weight_scale=self.config.weight_scale,
             random_state=self.config.random_state,
         )

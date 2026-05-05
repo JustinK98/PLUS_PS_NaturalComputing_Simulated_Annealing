@@ -7,7 +7,13 @@ import copy
 from PySide6 import QtCore, QtWidgets
 
 from benchmarks import DatasetBundle, load_benchmark
-from configs import DatasetConfig, GuiExperimentConfig, TrainingConfig, default_hidden_sizes
+from configs import (
+    DatasetConfig,
+    GuiExperimentConfig,
+    SUPPORTED_BENCHMARKS,
+    TrainingConfig,
+    default_hidden_sizes,
+)
 from model import ModularMLP
 from services.analysis_sample_service import (
     AnalysisSample,
@@ -88,7 +94,7 @@ class DemoWorkspace(BaseWorkspace):
         self.problem_group = QtWidgets.QGroupBox()
         problem_layout = QtWidgets.QFormLayout(self.problem_group)
         self.benchmark_combo = QtWidgets.QComboBox()
-        self.benchmark_combo.addItems(("breast_cancer", "wine", "digits", "test_activation"))
+        self.benchmark_combo.addItems(SUPPORTED_BENCHMARKS)
         self.benchmark_combo.setCurrentText(self.config.benchmark)
         self.benchmark_combo.currentTextChanged.connect(self._on_benchmark_changed)
         self.hidden_sizes_edit = QtWidgets.QLineEdit(", ".join(str(v) for v in self.config.hidden_sizes))
@@ -339,8 +345,9 @@ class DemoWorkspace(BaseWorkspace):
         self.preview_model = ModularMLP(
             input_size=self.dataset.input_size,
             hidden_sizes=hidden_sizes,
-            output_size=self.dataset.output_size,
+            output_size=self.dataset.model_output_size,
             layout=layout,
+            num_classes=self.dataset.output_size,
             weight_scale=self.weight_spin.value(),
             random_state=self.config.random_state,
         )
@@ -456,7 +463,14 @@ class DemoWorkspace(BaseWorkspace):
     def _refresh_all_views(self) -> None:
         if self.dataset is None:
             return
-        self.dataset_card.set_content(value=self.dataset.name, body=f"{self.dataset.input_size} -> {self.dataset.output_size}")
+        class_label = "classes" if self.preferences.language == "en" else "Klassen"
+        self.dataset_card.set_content(
+            value=self.dataset.name,
+            body=(
+                f"{self.dataset.input_size} -> {self.dataset.model_output_size} "
+                f"({self.dataset.output_size} {class_label})"
+            ),
+        )
         self.layout_card.set_content(value=self.layout_editor.layout_spec(), body=", ".join(str(v) for v in self.layout_editor.hidden_sizes()))
         if self.training_result is None:
             self.metrics_card.set_content(value="-", body="No training run yet.")

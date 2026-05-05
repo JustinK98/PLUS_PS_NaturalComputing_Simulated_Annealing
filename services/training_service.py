@@ -51,8 +51,9 @@ def run_single_training_experiment(request: TrainingRunRequest) -> TrainingRunAr
     model = ModularMLP(
         input_size=dataset.input_size,
         hidden_sizes=request.hidden_sizes,
-        output_size=dataset.output_size,
+        output_size=dataset.model_output_size,
         layout=training_layout,
+        num_classes=dataset.output_size,
         weight_scale=request.weight_scale,
         random_state=request.random_state,
     )
@@ -65,4 +66,3 @@ def run_single_training_experiment(request: TrainingRunRequest) -> TrainingRunAr
         model=model,
         training_result=training_result,
     )
-

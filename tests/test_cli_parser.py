@@ -24,6 +24,11 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(resolve_command(args), "gui")
         self.assertEqual(args.gui_app_mode, "presentation")
 
+    def test_activation_workflow_is_default_gui_mode(self) -> None:
+        args = self.parser.parse_args(["gui"])
+        self.assertEqual(resolve_command(args), "gui")
+        self.assertEqual(args.gui_app_mode, "activation_workflow")
+
         normalized = _normalize_compat_argv(["--mode", "presentation"])
         args = self.parser.parse_args(normalized)
         self.assertEqual(resolve_command(args), "gui")
@@ -42,9 +47,9 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(args.gui_app_mode, "playground")
 
     def test_run_subcommand_maps_to_single_run(self) -> None:
-        args = self.parser.parse_args(["run", "--benchmark", "wine", "--hidden-sizes", "16", "8"])
+        args = self.parser.parse_args(["run", "--benchmark", "iris", "--hidden-sizes", "8"])
         self.assertEqual(resolve_command(args), "run")
-        self.assertEqual(args.hidden_sizes, [16, 8])
+        self.assertEqual(args.hidden_sizes, [8])
 
     def test_experiment_subcommands_map_correctly(self) -> None:
         args = self.parser.parse_args(["experiment", "template", "--output", "tmp/example.json"])
@@ -55,6 +60,16 @@ class CliParserTests(unittest.TestCase):
 
         args = self.parser.parse_args(["experiment", "run", "--config", "tmp/example.json"])
         self.assertEqual(resolve_command(args), "experiment_run")
+
+        args = self.parser.parse_args(
+            ["experiment", "layout-grid", "--benchmark", "concentric_circles", "--max-candidates", "3"]
+        )
+        self.assertEqual(resolve_command(args), "experiment_layout_grid")
+        self.assertEqual(args.max_candidates, 3)
+
+        args = self.parser.parse_args(["experiment", "report", "--output-dir", "tmp/report_assets"])
+        self.assertEqual(resolve_command(args), "experiment_report")
+        self.assertEqual(args.output_dir, "tmp/report_assets")
 
 
 if __name__ == "__main__":

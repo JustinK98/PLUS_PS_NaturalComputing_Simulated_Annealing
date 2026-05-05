@@ -140,7 +140,7 @@ Qt startup lives in:
   - guided slide-first presentation mode
   - neural-network preview track
   - simulated-annealing preview track
-  - fixed Breast Cancer defaults for live demos
+  - fixed Concentric Circles defaults for live demos
 
 - `ui_qt/workspaces/demo_workspace.py`
   - sample inspection

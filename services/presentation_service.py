@@ -8,7 +8,7 @@ from activations import parse_layout_spec
 from annealing import AnnealingConfig
 from annealing_objectives import ObjectiveConfig
 from benchmarks import DatasetBundle, load_benchmark
-from configs import DatasetConfig, TrainingConfig
+from configs import DatasetConfig, TrainingConfig, default_hidden_sizes
 from model import ModularMLP
 from services.analysis_sample_service import AnalysisSample, build_analysis_sample
 from services.annealing_service import AnnealingRunRequest
@@ -16,9 +16,9 @@ from services.annealing_session_service import AnnealingSession, create_session
 from services.training_session_service import TrainingSessionSnapshot, create_training_session
 
 
-PRESENTATION_BENCHMARK = "breast_cancer"
-PRESENTATION_HIDDEN_SIZES = (8, 4)
-PRESENTATION_LAYOUT = "relu|relu"
+PRESENTATION_BENCHMARK = "concentric_circles"
+PRESENTATION_HIDDEN_SIZES = default_hidden_sizes(PRESENTATION_BENCHMARK)
+PRESENTATION_LAYOUT = "relu"
 PRESENTATION_SAMPLE_SPLIT = "val"
 PRESENTATION_SAMPLE_INDEX = 0
 PRESENTATION_RANDOM_STATE = 42
@@ -38,7 +38,7 @@ class PresentationRuntimeState:
 
 
 def create_presentation_state(language: str = "de") -> PresentationRuntimeState:
-    """Erzeugt einen reproduzierbaren Breast-Cancer-Zustand fuer Live-Demos."""
+    """Erzeugt einen reproduzierbaren offiziellen Benchmark-Zustand fuer Live-Demos."""
 
     dataset = load_benchmark(
         DatasetConfig(name=PRESENTATION_BENCHMARK, random_state=PRESENTATION_RANDOM_STATE)
@@ -47,8 +47,9 @@ def create_presentation_state(language: str = "de") -> PresentationRuntimeState:
     model = ModularMLP(
         input_size=dataset.input_size,
         hidden_sizes=PRESENTATION_HIDDEN_SIZES,
-        output_size=dataset.output_size,
+        output_size=dataset.model_output_size,
         layout=layout,
+        num_classes=dataset.output_size,
         weight_scale=PRESENTATION_WEIGHT_SCALE,
         random_state=PRESENTATION_RANDOM_STATE,
     )

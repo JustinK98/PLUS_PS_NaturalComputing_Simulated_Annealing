@@ -18,12 +18,12 @@ from configs import (
     DEFAULT_ANNEALING_START_TEMPERATURE,
     DEFAULT_BATCH_SIZE,
     DEFAULT_BENCHMARK,
-    DEFAULT_EPOCHS,
     DEFAULT_LAYOUT,
     DEFAULT_LEARNING_RATE,
     DEFAULT_RANDOM_SEED,
     DEFAULT_WEIGHT_SCALE,
     OUTPUT_DIR,
+    default_epochs,
     default_hidden_sizes,
 )
 from experiment_builder import ExperimentDefinition
@@ -61,7 +61,7 @@ def default_experiment_definition() -> ExperimentDefinition:
     """Liefert eine sinnvolle Default-Definition fuer CLI und Builder."""
 
     return ExperimentDefinition(
-        experiment_id="example_wine_manual",
+        experiment_id=f"example_{DEFAULT_BENCHMARK}_manual",
         benchmark=DEFAULT_BENCHMARK,
         hidden_sizes=default_hidden_sizes(DEFAULT_BENCHMARK),
         layout_spec=DEFAULT_LAYOUT,
@@ -75,7 +75,7 @@ def default_experiment_definition() -> ExperimentDefinition:
         learning_rate=DEFAULT_LEARNING_RATE,
         batch_size=DEFAULT_BATCH_SIZE,
         weight_scale=DEFAULT_WEIGHT_SCALE,
-        epochs=DEFAULT_EPOCHS,
+        epochs=default_epochs(DEFAULT_BENCHMARK),
         objective_name=DEFAULT_ANNEALING_OBJECTIVE,
         candidate_epochs=DEFAULT_ANNEALING_CANDIDATE_EPOCHS,
         neighborhood_operations=DEFAULT_ANNEALING_NEIGHBORHOODS,
@@ -109,4 +109,3 @@ def load_saved_experiment(path: str | Path) -> dict[str, Any]:
     """Laedt ein gespeichertes Experiment fuer Analyse und CLI-Ausgabe."""
 
     return load_experiment_results(path)
-

@@ -83,14 +83,24 @@ def check_baseline_compatibility(
             f"der aktuelle Benchmark liefert aber {dataset.input_size}."
         )
 
-    if baseline_model.output_size != dataset.output_size:
+    if baseline_model.output_size != dataset.model_output_size:
         if language == "en":
             return (
-                f"The baseline expects {baseline_model.output_size} output classes, "
+                f"The baseline expects {baseline_model.output_size} output neurons, "
+                f"but the current benchmark uses {dataset.model_output_size}."
+            )
+        return (
+            f"Die Baseline erwartet {baseline_model.output_size} Output-Neuronen, "
+            f"der aktuelle Benchmark nutzt aber {dataset.model_output_size}."
+        )
+    if baseline_model.num_classes != dataset.output_size:
+        if language == "en":
+            return (
+                f"The baseline expects {baseline_model.num_classes} classes, "
                 f"but the current benchmark provides {dataset.output_size}."
             )
         return (
-            f"Die Baseline erwartet {baseline_model.output_size} Ausgabeklassen, "
+            f"Die Baseline erwartet {baseline_model.num_classes} Klassen, "
             f"der aktuelle Benchmark liefert aber {dataset.output_size}."
         )
     return None

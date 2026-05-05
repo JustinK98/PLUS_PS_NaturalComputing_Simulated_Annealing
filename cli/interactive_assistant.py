@@ -6,7 +6,6 @@ import argparse
 
 from configs import (
     DEFAULT_BATCH_SIZE,
-    DEFAULT_EPOCHS,
     DEFAULT_LEARNING_RATE,
     DEFAULT_WEIGHT_SCALE,
     LAYOUT_SYNTAX_EXAMPLES,
@@ -18,6 +17,7 @@ from configs import (
     SUPPORTED_GUI_APP_MODES,
     SUPPORTED_GUI_LANGUAGES,
     SUPPORTED_GUI_MODES,
+    default_epochs,
     default_hidden_sizes,
     format_hidden_sizes,
 )
@@ -44,14 +44,15 @@ def run_interactive_setup(
         label="Benchmark",
         explanation=(
             "Waehle den Datensatz, auf dem trainiert werden soll.\n"
-            "- breast_cancer: kleiner binaerer Klassifikationsdatensatz\n"
-            "- wine: kleiner Mehrklassen-Datensatz, oft gut fuer erste Tests\n"
-            "- digits: groesserer Bild-/Merkmalsdatensatz mit 10 Klassen\n"
-            "- test_activation: kleines Rechenlabor mit wenigen Inputs fuer rohe Experimente"
+            "- concentric_circles: offizieller Easy-Benchmark mit 2 Eingaben\n"
+            "- iris: offizieller Medium-Benchmark mit 4 Eingaben und 3 Klassen\n"
+            "- crossing_spirals: offizieller Hard-Benchmark mit 6 Eingaben"
         ),
         options=SUPPORTED_BENCHMARKS,
         default=args.benchmark,
     )
+    if args.epochs is None:
+        args.epochs = default_epochs(args.benchmark)
 
     use_default_hidden_sizes = _prompt_yes_no(
         label="Standard-Hidden-Sizes verwenden",
@@ -151,7 +152,7 @@ def run_interactive_setup(
             "Hyperparameter das Verhalten beeinflussen, kannst du sie hier aendern."
         ),
         default=(
-            args.epochs == DEFAULT_EPOCHS
+            args.epochs == default_epochs(args.benchmark)
             and args.lr == DEFAULT_LEARNING_RATE
             and args.batch_size == DEFAULT_BATCH_SIZE
         ),
@@ -215,6 +216,7 @@ def run_interactive_setup(
             label="GUI-Arbeitsmodus",
             explanation=(
                 "demo ist fuer Verstehen, Visualisieren und schrittweises Training gedacht.\n"
+                "activation_workflow verbindet Training, SA-Suche und finalen Layout-Vergleich.\n"
                 "playground erweitert dieselbe Codebasis um Simulated Annealing und eine "
                 "sichtbare Optimierung ueber Aktivierungs-Layouts.\n"
                 "experiment_builder ist fuer reproduzierbare Multi-Seed-Runs, JSON-Ergebnisse "
@@ -303,7 +305,7 @@ def _build_layerwise_layout_from_prompt(num_layers: int) -> str:
             _prompt_choice(
                 label=f"Aktivierung fuer Hidden-Layer {layer_index + 1}",
                 explanation=(
-                    "Moeglich sind: relu, tanh, sigmoid, leaky_relu.\n"
+                    "Moeglich sind: relu, gelu, sigmoid, tanh, swish, identity.\n"
                     f"Diese Wahl gilt dann fuer alle Neuronen in Layer {layer_index + 1}."
                 ),
                 options=SUPPORTED_ACTIVATIONS,
@@ -325,7 +327,7 @@ def _prompt_layout_string(hidden_sizes: tuple[int, ...], default: str) -> str:
             label="Layout-String",
             explanation=(
                 "Beispiele: 'relu|tanh', 'relu|tanh|sigmoid', "
-                "'relu*16|tanh*8', 'relu*8,tanh*8|sigmoid*4,leaky_relu*4'"
+                "'relu*16|tanh*8', 'relu*8,tanh*8|sigmoid*4,swish*4'"
             ),
             default=default,
         )

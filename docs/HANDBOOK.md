@@ -35,9 +35,27 @@ Best for:
 - oral presentations
 - first contact before opening Demo or Playground Mode
 
-Presentation Mode uses fixed `breast_cancer` defaults so that the visual story remains stable.
+Presentation Mode uses fixed `concentric_circles` defaults so that the visual story remains stable.
 
 For the prepared talk flow, use [PRESENTATION_SCRIPT.md](PRESENTATION_SCRIPT.md). It contains slide-by-slide speaker text, click instructions, and a fallback route for the live demo.
+
+### Activation Workflow
+
+Use Activation Workflow when you want the complete project flow in one window.
+
+Typical use:
+
+- load one official CSV benchmark
+- choose or edit an activation layout
+- train that layout directly
+- optionally run simulated annealing over layouts
+- finally retrain and compare start, best, end, random, and homogeneous baseline layouts under identical conditions
+
+Best for:
+
+- explaining the actual project pipeline
+- comparing manual layout choices against SA-found layouts
+- producing the clearest result tables for discussion
 
 ### Demo Mode
 
@@ -100,12 +118,13 @@ Best for:
 
 A benchmark is the dataset and split configuration used for training and evaluation.
 
-Available benchmarks:
+Official benchmarks:
 
-- `breast_cancer`
-- `wine`
-- `digits`
-- `test_activation`
+- `concentric_circles`: 2 inputs, 2 classes, topology `2-8-1`, 100 epochs
+- `iris`: 4 inputs, 3 classes, topology `4-8-3`, 150 epochs
+- `crossing_spirals`: 6 inputs, 2 classes, topology `6-16-16-1`, 250 epochs
+
+`test_activation` remains an internal computation lab, not an official benchmark for reports.
 
 ### Hidden Layer
 
@@ -121,7 +140,7 @@ Examples:
 
 - `relu|relu`
 - `relu*16|tanh*8`
-- `relu*8,tanh*8|sigmoid*4,leaky_relu*4`
+- `relu*8,tanh*8|sigmoid*4,swish*4`
 
 In the GUI, the layout can be edited:
 
@@ -358,7 +377,7 @@ Stop threshold once the search has cooled enough.
 
 ### Demo Mode
 
-1. start with `wine`
+1. start with `concentric_circles`
 2. keep hidden sizes small
 3. inspect one sample
 4. compare `relu` and `tanh`
@@ -366,8 +385,8 @@ Stop threshold once the search has cooled enough.
 
 ### Playground Mode
 
-1. start with `wine`
-2. use a simple start layout like `relu|relu`
+1. start with `concentric_circles`
+2. use a simple start layout like `relu`
 3. choose `validation_loss`
 4. use `candidate_epochs = 10`
 5. use geometric cooling
@@ -410,20 +429,20 @@ This allows:
 
 ## 11. Guided Experiment Recipes
 
-### Recipe 1: ReLU vs Tanh on `wine`
+### Recipe 1: ReLU vs Tanh on `iris`
 
 Goal:
 
-- compare two simple activation layouts on a compact multiclass benchmark
+- compare two simple activation layouts on the official medium multiclass benchmark
 
 Suggested setup:
 
-- benchmark: `wine`
-- hidden sizes: `16 / 8`
+- benchmark: `iris`
+- hidden sizes: `8`
 - seeds: `5`
 - mode: `manual_training`
-- layout A: `relu*16|relu*8`
-- layout B: `tanh*16|tanh*8`
+- layout A: `relu*8`
+- layout B: `tanh*8`
 - epochs: `50` to `120`
 - learning rate: `0.03`
 
@@ -434,27 +453,27 @@ What to watch:
 - probability profiles per class
 - convergence speed and stability
 
-### Recipe 2: Mixed vs Homogeneous Layout on `digits`
+### Recipe 2: Mixed vs Homogeneous Layout on `crossing_spirals`
 
 Goal:
 
-- see whether mixed hidden activations change uncertainty patterns on image-like data
+- see whether mixed hidden activations help on the official hard benchmark
 
 Suggested setup:
 
-- benchmark: `digits`
-- hidden sizes: `32 / 16`
+- benchmark: `crossing_spirals`
+- hidden sizes: `16 / 16`
 - seeds: `5`
 - mode: `manual_training`
-- layout A: `relu*32|relu*16`
-- layout B: `relu*16,tanh*16|relu*8,sigmoid*8`
+- layout A: `relu*16|relu*16`
+- layout B: `relu*8,tanh*8|gelu*8,swish*8`
 
 What to watch:
 
 - mean validation accuracy
 - test accuracy
-- uncertain digits
-- probability shifts on difficult classes
+- final validation and test accuracy
+- whether SA-found layouts beat homogeneous baselines
 
 ### Recipe 3: Simulated Annealing from a Homogeneous ReLU Start
 
@@ -464,10 +483,10 @@ Goal:
 
 Suggested setup:
 
-- benchmark: `wine`
-- hidden sizes: `16 / 8`
+- benchmark: `concentric_circles`
+- hidden sizes: `8`
 - mode: `simulated_annealing`
-- start layout: `relu*16|relu*8`
+- start layout: `relu*8`
 - objective: `validation_loss`
 - candidate epochs: `10`
 - start temperature: `1.0`
@@ -515,7 +534,7 @@ Suggested setup:
 - hidden sizes: `4 / 3`
 - use custom sample
 - compare layouts such as:
-  - `relu,tanh,sigmoid,leaky_relu|relu,tanh,sigmoid`
+  - `relu,tanh,sigmoid,gelu|relu,tanh,sigmoid`
   - `relu*4|relu*3`
   - `sigmoid*4|sigmoid*3`
 

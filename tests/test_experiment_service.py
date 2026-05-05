@@ -24,7 +24,7 @@ class ExperimentServiceTests(unittest.TestCase):
             save_experiment_template(output_path)
             definition = load_experiment_definition(output_path)
             self.assertIsInstance(definition, ExperimentDefinition)
-            self.assertEqual(definition.experiment_id, "example_wine_manual")
+            self.assertEqual(definition.experiment_id, "example_concentric_circles_manual")
 
     def test_definition_json_roundtrip(self) -> None:
         definition = default_experiment_definition()
@@ -38,10 +38,10 @@ class ExperimentServiceTests(unittest.TestCase):
     def test_run_experiment_definition_manual_smoke(self) -> None:
         definition = replace(
             default_experiment_definition(),
-            experiment_id="test_activation_manual_smoke",
-            benchmark="test_activation",
-            hidden_sizes=(4, 3),
-            layout_spec="relu|tanh",
+            experiment_id="concentric_manual_smoke",
+            benchmark="concentric_circles",
+            hidden_sizes=(8,),
+            layout_spec="relu",
             seeds=(11,),
             save_json=False,
             epochs=2,

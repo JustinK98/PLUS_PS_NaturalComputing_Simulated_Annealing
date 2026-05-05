@@ -54,14 +54,14 @@ TRACKS: dict[str, tuple[PresentationSlide, ...]] = {
             question_en="Which task do we look at first?",
             bullets_de=(
                 "Ziel dieses ersten Blocks: verstehen, wie ein kleines neuronales Netz aus Messwerten eine Entscheidung berechnet.",
-                "Breast Cancer ist dafuer ein uebersichtlicher binaerer Klassifikationsdatensatz.",
-                "Das Netz bekommt numerische Zell-Messwerte und gibt Wahrscheinlichkeiten fuer zwei Klassen aus.",
+                "Concentric Circles ist der offizielle Easy-Benchmark mit zwei Eingaben und zwei Klassen.",
+                "Das Netz bekommt x/y-Koordinaten und soll die Kreiszugehoerigkeit vorhersagen.",
                 "Wichtig: Hier trainieren wir Gewichte. Die Wahl der Aktivierungsfunktionen wird erst im SA-Teil zur Suchfrage.",
             ),
             bullets_en=(
                 "Goal of this first block: understand how a small neural network turns measurements into a decision.",
-                "Breast Cancer is a compact binary classification dataset for that purpose.",
-                "The network receives numeric cell measurements and outputs probabilities for two classes.",
+                "Concentric Circles is the official easy benchmark with two inputs and two classes.",
+                "The network receives x/y coordinates and predicts circle membership.",
                 "Important: here we train weights. The activation choice becomes the search question in the SA part.",
             ),
         ),

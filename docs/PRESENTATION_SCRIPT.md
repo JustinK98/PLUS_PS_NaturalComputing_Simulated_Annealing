@@ -35,7 +35,7 @@ Klick: keinen.
 
 Sagen:
 
-> Hier sehen wir ein konkretes Sample aus dem Breast-Cancer-Datensatz. Das echte Ziel kommt aus dem Datensatz. Die Vorhersage ist die aktuelle Entscheidung des Modells. Das Analyse-Ziel verwenden wir fuer lokale Erklaerungen, etwa Loss und Gradienten.
+> Hier sehen wir ein konkretes Sample aus dem Concentric-Circles-Datensatz. Das echte Ziel kommt aus dem Datensatz. Die Vorhersage ist die aktuelle Entscheidung des Modells. Das Analyse-Ziel verwenden wir fuer lokale Erklaerungen, etwa Loss und Gradienten.
 
 Kernaussage:
 

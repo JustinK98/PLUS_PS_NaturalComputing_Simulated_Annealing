@@ -1,0 +1,384 @@
+"""Finale Layout-Vergleiche unter identischen Trainingsbedingungen."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+from pathlib import Path
+
+import numpy as np
+
+from activations import parse_layout_spec
+from benchmarks import load_benchmark
+from configs import DatasetConfig, TrainingConfig, SUPPORTED_ACTIVATIONS
+from model import ModularMLP
+from trainer import train_model
+
+
+@dataclass(frozen=True)
+class LayoutCandidate:
+    """Ein Layout, das final trainiert und verglichen werden soll."""
+
+    label: str
+    layout_spec: str
+
+
+@dataclass(frozen=True)
+class LayoutEvaluationRun:
+    """Ein einzelner Seed-Run fuer ein Layout."""
+
+    label: str
+    layout_spec: str
+    seed: int
+    metrics: dict[str, float]
+    history: dict[str, list[float]]
+    model_state: dict[str, object]
+
+
+@dataclass(frozen=True)
+class AggregatedLayoutEvaluation:
+    """Aggregation ueber alle Seeds eines Layouts."""
+
+    label: str
+    layout_spec: str
+    num_runs: int
+    mean_metrics: dict[str, float]
+    std_metrics: dict[str, float]
+    min_metrics: dict[str, float]
+    max_metrics: dict[str, float]
+    ranking_score: float
+
+
+@dataclass(frozen=True)
+class LayoutEvaluationRequest:
+    """Konfiguration fuer einen fairen Layout-Vergleich."""
+
+    dataset_config: DatasetConfig
+    hidden_sizes: tuple[int, ...]
+    candidates: tuple[LayoutCandidate, ...]
+    seeds: tuple[int, ...]
+    training_config: TrainingConfig
+    weight_scale: float
+    primary_metric: str = "validation_loss"
+
+
+@dataclass(frozen=True)
+class LayoutEvaluationResult:
+    """Vollstaendiges Ergebnis eines Layout-Vergleichs."""
+
+    runs: tuple[LayoutEvaluationRun, ...]
+    aggregated: tuple[AggregatedLayoutEvaluation, ...]
+    ranking: tuple[AggregatedLayoutEvaluation, ...]
+
+
+STANDARD_NEIGHBORHOOD_SETS: dict[str, tuple[str, ...]] = {
+    "set_neuron": ("set_neuron",),
+    "swap_neurons": ("swap_neurons",),
+    "fill_layer": ("fill_layer",),
+    "set_neuron_swap_neurons": ("set_neuron", "swap_neurons"),
+    "set_neuron_fill_layer": ("set_neuron", "fill_layer"),
+    "all_operations": ("set_neuron", "fill_layer", "swap_neurons"),
+}
+
+
+def build_standard_layout_candidates(
+    hidden_sizes: tuple[int, ...],
+    *,
+    start_layout_spec: str,
+    best_layout_spec: str | None = None,
+    end_layout_spec: str | None = None,
+    random_state: int = 42,
+) -> tuple[LayoutCandidate, ...]:
+    """Erzeugt die Standard-Baselines fuer die finale Layout-Auswertung."""
+
+    candidates: list[LayoutCandidate] = [LayoutCandidate("start_layout", start_layout_spec)]
+    if best_layout_spec is not None:
+        candidates.append(LayoutCandidate("best_layout_from_sa", best_layout_spec))
+    if end_layout_spec is not None and end_layout_spec != best_layout_spec:
+        candidates.append(LayoutCandidate("end_layout_from_sa", end_layout_spec))
+    candidates.append(
+        LayoutCandidate(
+            "random_layout",
+            _random_layout_spec(hidden_sizes, random_state=random_state),
+        )
+    )
+    for activation_name in SUPPORTED_ACTIVATIONS:
+        candidates.append(LayoutCandidate(f"all_{activation_name}", activation_name))
+    return _deduplicate_candidates(tuple(candidates))
+
+
+def build_layout_grid_candidates(
+    hidden_sizes: tuple[int, ...],
+    *,
+    activations: tuple[str, ...] = SUPPORTED_ACTIVATIONS,
+    include_mixed: bool = True,
+    max_candidates: int | None = None,
+) -> tuple[LayoutCandidate, ...]:
+    """Erzeugt ein kleines, reproduzierbares Layout-Grid fuer Demo-Vortraining."""
+
+    candidates: list[LayoutCandidate] = []
+    for activation_name in activations:
+        candidates.append(LayoutCandidate(f"all_{activation_name}", activation_name))
+
+    if len(hidden_sizes) > 1:
+        for layer_activations in _cartesian_product(activations, len(hidden_sizes)):
+            layout_spec = "|".join(layer_activations)
+            label = "layers_" + "_".join(layer_activations)
+            candidates.append(LayoutCandidate(label, layout_spec))
+
+    if include_mixed:
+        for left_index, left_activation in enumerate(activations):
+            for right_activation in activations[left_index + 1 :]:
+                layers = [
+                    _mixed_layer_spec(layer_size, left_activation, right_activation)
+                    for layer_size in hidden_sizes
+                ]
+                label = f"mixed_{left_activation}_{right_activation}"
+                candidates.append(LayoutCandidate(label, "|".join(layers)))
+
+    unique_candidates = _deduplicate_layout_specs(tuple(candidates))
+    if max_candidates is not None:
+        return unique_candidates[: max(1, int(max_candidates))]
+    return unique_candidates
+
+
+def run_layout_evaluation(request: LayoutEvaluationRequest) -> LayoutEvaluationResult:
+    """Trainiert mehrere Layouts fair gegeneinander und aggregiert die Ergebnisse."""
+
+    if not request.candidates:
+        raise ValueError("LayoutEvaluationRequest braucht mindestens ein Layout.")
+    if not request.seeds:
+        raise ValueError("LayoutEvaluationRequest braucht mindestens einen Seed.")
+    if request.primary_metric not in {"validation_loss", "validation_accuracy"}:
+        raise ValueError("primary_metric muss validation_loss oder validation_accuracy sein.")
+
+    runs: list[LayoutEvaluationRun] = []
+    for seed in request.seeds:
+        dataset = load_benchmark(
+            DatasetConfig(
+                name=request.dataset_config.name,
+                validation_size=request.dataset_config.validation_size,
+                test_size=request.dataset_config.test_size,
+                random_state=int(seed),
+            )
+        )
+        for candidate in request.candidates:
+            layout = parse_layout_spec(candidate.layout_spec, request.hidden_sizes)
+            model = ModularMLP(
+                input_size=dataset.input_size,
+                hidden_sizes=request.hidden_sizes,
+                output_size=dataset.model_output_size,
+                layout=layout,
+                num_classes=dataset.output_size,
+                weight_scale=request.weight_scale,
+                random_state=int(seed),
+            )
+            training_config = TrainingConfig(
+                epochs=request.training_config.epochs,
+                learning_rate=request.training_config.learning_rate,
+                batch_size=request.training_config.batch_size,
+                random_state=int(seed),
+                shuffle=request.training_config.shuffle,
+            )
+            training_result = train_model(model, dataset, training_config)
+            runs.append(
+                LayoutEvaluationRun(
+                    label=candidate.label,
+                    layout_spec=layout.to_compact_spec(),
+                    seed=int(seed),
+                    metrics={
+                        "train_loss": float(training_result.history["train_loss"][-1]),
+                        "val_loss": float(training_result.history["val_loss"][-1]),
+                        "test_loss": float(training_result.test_metrics["loss"]),
+                        "train_accuracy": float(training_result.history["train_acc"][-1]),
+                        "val_accuracy": float(training_result.history["val_acc"][-1]),
+                        "test_accuracy": float(training_result.test_metrics["accuracy"]),
+                    },
+                    history=training_result.history,
+                    model_state=model.to_state_dict(),
+                )
+            )
+
+    aggregated = _aggregate_runs(tuple(runs), request.primary_metric)
+    ranking = tuple(sorted(aggregated, key=lambda item: item.ranking_score))
+    return LayoutEvaluationResult(
+        runs=tuple(runs),
+        aggregated=aggregated,
+        ranking=ranking,
+    )
+
+
+def layout_evaluation_to_dict(result: LayoutEvaluationResult) -> dict[str, object]:
+    """Serialisiert einen Layout-Vergleich inklusive trainierter Modellzustaende."""
+
+    return {
+        "runs": [
+            {
+                "label": run.label,
+                "layout_spec": run.layout_spec,
+                "seed": run.seed,
+                "metrics": run.metrics,
+                "history": run.history,
+                "model_state": run.model_state,
+            }
+            for run in result.runs
+        ],
+        "aggregated": [
+            {
+                "label": item.label,
+                "layout_spec": item.layout_spec,
+                "num_runs": item.num_runs,
+                "mean_metrics": item.mean_metrics,
+                "std_metrics": item.std_metrics,
+                "min_metrics": item.min_metrics,
+                "max_metrics": item.max_metrics,
+                "ranking_score": item.ranking_score,
+            }
+            for item in result.aggregated
+        ],
+        "ranking": [
+            {
+                "label": item.label,
+                "layout_spec": item.layout_spec,
+                "ranking_score": item.ranking_score,
+                "mean_metrics": item.mean_metrics,
+            }
+            for item in result.ranking
+        ],
+    }
+
+
+def best_layout_run(result: LayoutEvaluationResult, primary_metric: str) -> LayoutEvaluationRun:
+    """Liefert den besten konkreten trainierten Run aus einem Grid."""
+
+    if not result.runs:
+        raise ValueError("LayoutEvaluationResult enthaelt keine Runs.")
+    if primary_metric == "validation_loss":
+        return min(result.runs, key=lambda run: run.metrics["val_loss"])
+    if primary_metric == "validation_accuracy":
+        return max(result.runs, key=lambda run: run.metrics["val_accuracy"])
+    raise ValueError("primary_metric muss validation_loss oder validation_accuracy sein.")
+
+
+def save_layout_grid_result(
+    path: str | Path,
+    *,
+    request: LayoutEvaluationRequest,
+    result: LayoutEvaluationResult,
+) -> Path:
+    """Speichert ein Demo-Grid inklusive bestem vortrainiertem Modell."""
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    best_run = best_layout_run(result, request.primary_metric)
+    payload = {
+        "kind": "layout_grid",
+        "benchmark": request.dataset_config.name,
+        "hidden_sizes": list(request.hidden_sizes),
+        "seeds": list(request.seeds),
+        "primary_metric": request.primary_metric,
+        "training": {
+            "epochs": request.training_config.epochs,
+            "learning_rate": request.training_config.learning_rate,
+            "batch_size": request.training_config.batch_size,
+            "shuffle": request.training_config.shuffle,
+            "weight_scale": request.weight_scale,
+        },
+        "candidate_count": len(request.candidates),
+        "best_run": {
+            "label": best_run.label,
+            "layout_spec": best_run.layout_spec,
+            "seed": best_run.seed,
+            "metrics": best_run.metrics,
+            "history": best_run.history,
+            "model_state": best_run.model_state,
+        },
+        "result": layout_evaluation_to_dict(result),
+    }
+    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return output_path
+
+
+def _aggregate_runs(
+    runs: tuple[LayoutEvaluationRun, ...],
+    primary_metric: str,
+) -> tuple[AggregatedLayoutEvaluation, ...]:
+    grouped: dict[str, list[LayoutEvaluationRun]] = {}
+    for run in runs:
+        grouped.setdefault(run.label, []).append(run)
+
+    aggregated: list[AggregatedLayoutEvaluation] = []
+    for label, label_runs in grouped.items():
+        metric_names = tuple(label_runs[0].metrics)
+        metric_values = {
+            metric_name: np.asarray([run.metrics[metric_name] for run in label_runs], dtype=np.float64)
+            for metric_name in metric_names
+        }
+        mean_metrics = {name: float(values.mean()) for name, values in metric_values.items()}
+        std_metrics = {name: float(values.std(ddof=0)) for name, values in metric_values.items()}
+        min_metrics = {name: float(values.min()) for name, values in metric_values.items()}
+        max_metrics = {name: float(values.max()) for name, values in metric_values.items()}
+        ranking_score = (
+            mean_metrics["val_loss"]
+            if primary_metric == "validation_loss"
+            else 1.0 - mean_metrics["val_accuracy"]
+        )
+        aggregated.append(
+            AggregatedLayoutEvaluation(
+                label=label,
+                layout_spec=label_runs[0].layout_spec,
+                num_runs=len(label_runs),
+                mean_metrics=mean_metrics,
+                std_metrics=std_metrics,
+                min_metrics=min_metrics,
+                max_metrics=max_metrics,
+                ranking_score=float(ranking_score),
+            )
+        )
+    return tuple(aggregated)
+
+
+def _random_layout_spec(hidden_sizes: tuple[int, ...], random_state: int) -> str:
+    rng = np.random.default_rng(random_state)
+    layers: list[str] = []
+    for layer_size in hidden_sizes:
+        layer = rng.choice(SUPPORTED_ACTIVATIONS, size=layer_size, replace=True)
+        layers.append(",".join(str(name) for name in layer))
+    return "|".join(layers)
+
+
+def _mixed_layer_spec(layer_size: int, left_activation: str, right_activation: str) -> str:
+    left_count = layer_size // 2
+    right_count = layer_size - left_count
+    return ",".join([left_activation] * left_count + [right_activation] * right_count)
+
+
+def _cartesian_product(values: tuple[str, ...], length: int) -> tuple[tuple[str, ...], ...]:
+    if length <= 0:
+        return ((),)
+    result: list[tuple[str, ...]] = [()]
+    for _ in range(length):
+        result = [prefix + (value,) for prefix in result for value in values]
+    return tuple(result)
+
+
+def _deduplicate_candidates(candidates: tuple[LayoutCandidate, ...]) -> tuple[LayoutCandidate, ...]:
+    seen: set[str] = set()
+    result: list[LayoutCandidate] = []
+    for candidate in candidates:
+        if candidate.label in seen:
+            continue
+        seen.add(candidate.label)
+        result.append(candidate)
+    return tuple(result)
+
+
+def _deduplicate_layout_specs(candidates: tuple[LayoutCandidate, ...]) -> tuple[LayoutCandidate, ...]:
+    seen: set[str] = set()
+    result: list[LayoutCandidate] = []
+    for candidate in candidates:
+        if candidate.layout_spec in seen:
+            continue
+        seen.add(candidate.layout_spec)
+        result.append(candidate)
+    return tuple(result)

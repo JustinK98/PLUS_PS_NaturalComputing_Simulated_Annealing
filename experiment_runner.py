@@ -21,6 +21,11 @@ from model import ModularMLP
 from results_analysis import aggregate_run_results
 from results_store import save_experiment_results
 from search_spaces import expand_search_space
+from services.layout_evaluation_service import (
+    LayoutEvaluationRequest,
+    build_standard_layout_candidates,
+    run_layout_evaluation,
+)
 from trainer import train_model
 
 
@@ -138,8 +143,9 @@ class ExperimentRunner:
         model = ModularMLP(
             input_size=dataset.input_size,
             hidden_sizes=definition.hidden_sizes,
-            output_size=dataset.output_size,
+            output_size=dataset.model_output_size,
             layout=layout,
+            num_classes=dataset.output_size,
             weight_scale=definition.weight_scale,
             random_state=run_definition.seed,
         )
@@ -242,6 +248,45 @@ class ExperimentRunner:
             "acceptance_rate": float(state.acceptance_rate),
             "step_count": float(state.step_index),
         }
+        final_layout_evaluation = run_layout_evaluation(
+            LayoutEvaluationRequest(
+                dataset_config=DatasetConfig(
+                    name=definition.benchmark,
+                    random_state=run_definition.seed,
+                ),
+                hidden_sizes=definition.hidden_sizes,
+                candidates=build_standard_layout_candidates(
+                    definition.hidden_sizes,
+                    start_layout_spec=state.start_evaluation.layout.to_compact_spec(),
+                    best_layout_spec=best_evaluation.layout.to_compact_spec(),
+                    end_layout_spec=current_evaluation.layout.to_compact_spec(),
+                    random_state=run_definition.seed,
+                ),
+                seeds=(run_definition.seed,),
+                training_config=TrainingConfig(
+                    epochs=definition.epochs,
+                    learning_rate=definition.learning_rate,
+                    batch_size=definition.batch_size,
+                    random_state=run_definition.seed,
+                    shuffle=definition.shuffle,
+                ),
+                weight_scale=definition.weight_scale,
+                primary_metric=definition.primary_metric,
+            )
+        )
+        final_best = next(
+            (
+                item
+                for item in final_layout_evaluation.aggregated
+                if item.label == "best_layout_from_sa"
+            ),
+            None,
+        )
+        if final_best is not None:
+            metrics["final_val_loss"] = float(final_best.mean_metrics["val_loss"])
+            metrics["final_val_accuracy"] = float(final_best.mean_metrics["val_accuracy"])
+            metrics["final_test_loss"] = float(final_best.mean_metrics["test_loss"])
+            metrics["final_test_accuracy"] = float(final_best.mean_metrics["test_accuracy"])
         sa_history = [
             {
                 "step_index": int(step.step_index),
@@ -291,6 +336,7 @@ class ExperimentRunner:
                     "neighborhood_operations": list(definition.neighborhood_operations),
                 },
                 "annealing_history": sa_history,
+                "final_layout_evaluation": _layout_evaluation_to_payload(final_layout_evaluation),
             },
         )
 
@@ -326,3 +372,43 @@ class ExperimentRunner:
             "max_steps": int(definition.max_steps),
             "min_temperature": float(definition.min_temperature),
         }
+
+
+def _layout_evaluation_to_payload(result) -> dict[str, Any]:
+    """Serialisiert den finalen Layout-Vergleich fuer JSON-Ergebnisse."""
+
+    return {
+        "runs": [
+            {
+                "label": run.label,
+                "layout_spec": run.layout_spec,
+                "seed": int(run.seed),
+                "metrics": dict(run.metrics),
+                "history": dict(run.history),
+                "model_state": run.model_state,
+            }
+            for run in result.runs
+        ],
+        "aggregated": [
+            {
+                "label": item.label,
+                "layout_spec": item.layout_spec,
+                "num_runs": int(item.num_runs),
+                "mean_metrics": dict(item.mean_metrics),
+                "std_metrics": dict(item.std_metrics),
+                "min_metrics": dict(item.min_metrics),
+                "max_metrics": dict(item.max_metrics),
+                "ranking_score": float(item.ranking_score),
+            }
+            for item in result.aggregated
+        ],
+        "ranking": [
+            {
+                "label": item.label,
+                "layout_spec": item.layout_spec,
+                "ranking_score": float(item.ranking_score),
+                "mean_metrics": dict(item.mean_metrics),
+            }
+            for item in result.ranking
+        ],
+    }

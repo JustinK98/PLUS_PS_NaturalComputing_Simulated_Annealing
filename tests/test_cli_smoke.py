@@ -22,12 +22,11 @@ class CliSmokeTests(unittest.TestCase):
                 "main.py",
                 "run",
                 "--benchmark",
-                "test_activation",
+                "concentric_circles",
                 "--hidden-sizes",
-                "4",
-                "3",
+                "8",
                 "--layout",
-                "relu|tanh",
+                "relu",
                 "--epochs",
                 "1",
                 "--show-neighbors",
@@ -78,9 +77,9 @@ class CliSmokeTests(unittest.TestCase):
             definition = replace(
                 default_experiment_definition(),
                 experiment_id="cli_smoke_experiment",
-                benchmark="test_activation",
-                hidden_sizes=(4, 3),
-                layout_spec="relu|tanh",
+                benchmark="concentric_circles",
+                hidden_sizes=(8,),
+                layout_spec="relu",
                 epochs=2,
                 seeds=(5,),
                 save_json=False,
@@ -104,6 +103,33 @@ class CliSmokeTests(unittest.TestCase):
                 check=True,
             )
             self.assertIn("Top ranking entries", completed.stdout)
+
+    def test_layout_grid_subcommand_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "grid.json"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "main.py",
+                    "experiment",
+                    "layout-grid",
+                    "--benchmark",
+                    "concentric_circles",
+                    "--epochs",
+                    "1",
+                    "--max-candidates",
+                    "3",
+                    "--output",
+                    str(output_path),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertTrue(output_path.exists())
+            self.assertIn("layout_grid:", completed.stdout)
+            self.assertIn("top layouts:", completed.stdout)
 
 
 if __name__ == "__main__":

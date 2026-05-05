@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from activations import generate_single_step_neighbors
-from configs import DatasetConfig, TrainingConfig, VisualizationConfig, default_hidden_sizes
+from configs import DatasetConfig, TrainingConfig, VisualizationConfig, default_epochs, default_hidden_sizes
 from runtime_env import configure_runtime_environment
 from services.training_service import TrainingRunRequest, run_single_training_experiment
 from terminal_viz import (
@@ -21,13 +21,14 @@ def run_single_command(args) -> None:
     """Fuehrt einen einzelnen Trainingslauf im Terminal aus."""
 
     hidden_sizes = tuple(args.hidden_sizes) if args.hidden_sizes else default_hidden_sizes(args.benchmark)
+    epochs = args.epochs if args.epochs is not None else default_epochs(args.benchmark)
     artifacts = run_single_training_experiment(
         TrainingRunRequest(
             dataset_config=DatasetConfig(name=args.benchmark, random_state=args.seed),
             hidden_sizes=hidden_sizes,
             layout_spec=args.layout,
             training_config=TrainingConfig(
-                epochs=args.epochs,
+                epochs=epochs,
                 learning_rate=args.lr,
                 batch_size=args.batch_size,
                 random_state=args.seed,

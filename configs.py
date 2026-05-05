@@ -21,23 +21,34 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from benchmark_registry import OFFICIAL_BENCHMARK_SPECS, OFFICIAL_BENCHMARKS
+
 
 # Diese Tupel definieren die "offiziell" unterstuetzten Namen im Projekt.
 # Der Parser und die Validierung greifen mehrfach darauf zu.
-SUPPORTED_BENCHMARKS = ("breast_cancer", "wine", "digits", "test_activation")
-SUPPORTED_ACTIVATIONS = ("relu", "tanh", "sigmoid", "leaky_relu")
+SUPPORTED_BENCHMARKS = OFFICIAL_BENCHMARKS
+INTERNAL_BENCHMARKS = ("test_activation",)
+ALL_BENCHMARKS = (*SUPPORTED_BENCHMARKS, *INTERNAL_BENCHMARKS)
+SUPPORTED_ACTIVATIONS = ("relu", "gelu", "sigmoid", "tanh", "swish", "identity")
+LEGACY_ACTIVATIONS = ("leaky_relu",)
 SUPPORTED_GUI_MODES = ("beginner", "expert")
 SUPPORTED_GUI_LANGUAGES = ("de", "en")
-SUPPORTED_GUI_APP_MODES = ("presentation", "demo", "playground", "experiment_builder")
+SUPPORTED_GUI_APP_MODES = (
+    "activation_workflow",
+    "presentation",
+    "demo",
+    "playground",
+    "experiment_builder",
+)
 
 
 # Standardwerte fuer einen schnellen Einstieg.
 # Wenn das Projekt einfach mit `python main.py` gestartet wird, werden genau
 # diese Defaults benutzt, sofern der interaktive Assistent nichts anderes setzt.
-DEFAULT_BENCHMARK = "breast_cancer"
-DEFAULT_LAYOUT = "relu|relu"
+DEFAULT_BENCHMARK = "concentric_circles"
+DEFAULT_LAYOUT = "relu"
 DEFAULT_RANDOM_SEED = 42
-DEFAULT_GUI_APP_MODE = "demo"
+DEFAULT_GUI_APP_MODE = "activation_workflow"
 DEFAULT_EPOCHS = 120
 DEFAULT_LEARNING_RATE = 0.03
 DEFAULT_BATCH_SIZE = 32
@@ -64,11 +75,14 @@ MAX_HIDDEN_LAYERS = 4
 # Kleine, bewusst gut lesbare Architekturen fuer die drei Datensaetze.
 # Die Werte sind nicht "optimal", sondern didaktisch handhabbar.
 DEFAULT_HIDDEN_SIZES_BY_BENCHMARK = {
-    "breast_cancer": (16, 8),
-    "wine": (16, 8),
-    "digits": (32, 16),
+    name: spec.hidden_sizes for name, spec in OFFICIAL_BENCHMARK_SPECS.items()
+} | {
     "test_activation": (4, 3),
 }
+
+DEFAULT_EPOCHS_BY_BENCHMARK = {
+    name: spec.epochs for name, spec in OFFICIAL_BENCHMARK_SPECS.items()
+} | {"test_activation": DEFAULT_EPOCHS}
 
 
 # Alle automatisch gespeicherten Plots landen unterhalb dieses Ordners.
@@ -84,10 +98,10 @@ LAYOUT_SYNTAX_EXAMPLES = """Layout-Syntax:
   relu*16|tanh*8
       gleiche Idee, aber mit expliziter Neuron-Anzahl
 
-  relu*8,tanh*8|sigmoid*4,leaky_relu*4
+  relu*8,tanh*8|sigmoid*4,swish*4
       Mischung innerhalb eines Layers
 
-  relu,relu,tanh,sigmoid|leaky_relu*4
+  relu,relu,tanh,sigmoid|swish*4
       voll explizite Belegung einzelner Neuronen
 
   relu|tanh|sigmoid
@@ -203,7 +217,19 @@ def default_hidden_sizes(benchmark_name: str) -> tuple[int, ...]:
     try:
         return DEFAULT_HIDDEN_SIZES_BY_BENCHMARK[benchmark_name]
     except KeyError as exc:
-        supported = ", ".join(SUPPORTED_BENCHMARKS)
+        supported = ", ".join(ALL_BENCHMARKS)
+        raise ValueError(
+            f"Unbekannter Benchmark '{benchmark_name}'. Erlaubt sind: {supported}"
+        ) from exc
+
+
+def default_epochs(benchmark_name: str) -> int:
+    """Liefert die standardmaessige Trainingsdauer fuer einen Benchmark."""
+
+    try:
+        return DEFAULT_EPOCHS_BY_BENCHMARK[benchmark_name]
+    except KeyError as exc:
+        supported = ", ".join(ALL_BENCHMARKS)
         raise ValueError(
             f"Unbekannter Benchmark '{benchmark_name}'. Erlaubt sind: {supported}"
         ) from exc

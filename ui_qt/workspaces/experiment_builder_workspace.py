@@ -10,7 +10,7 @@ from PySide6 import QtCore, QtWidgets
 
 from activations import parse_layout_spec
 from benchmarks import load_benchmark
-from configs import DatasetConfig, GuiExperimentConfig, OUTPUT_DIR, default_hidden_sizes
+from configs import DatasetConfig, GuiExperimentConfig, OUTPUT_DIR, SUPPORTED_BENCHMARKS, default_hidden_sizes
 from experiment_builder import ExperimentDefinition
 from model import ModularMLP
 from search_spaces import SearchSpaceDefinition, SearchValueDefinition
@@ -74,7 +74,7 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
         setup_layout = QtWidgets.QFormLayout(self.setup_group)
         self.experiment_id_edit = QtWidgets.QLineEdit("qt_experiment")
         self.benchmark_combo = QtWidgets.QComboBox()
-        self.benchmark_combo.addItems(("breast_cancer", "wine", "digits", "test_activation"))
+        self.benchmark_combo.addItems(SUPPORTED_BENCHMARKS)
         self.benchmark_combo.setCurrentText(definition.benchmark)
         self.benchmark_combo.currentTextChanged.connect(self._on_benchmark_changed)
         self.hidden_sizes_edit = QtWidgets.QLineEdit(", ".join(str(v) for v in definition.hidden_sizes))
@@ -484,8 +484,9 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
             model = ModularMLP(
                 input_size=dataset.input_size,
                 hidden_sizes=hidden_sizes,
-                output_size=dataset.output_size,
+                output_size=dataset.model_output_size,
                 layout=layout,
+                num_classes=dataset.output_size,
                 random_state=0,
             )
         else:

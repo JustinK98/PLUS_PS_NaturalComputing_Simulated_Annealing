@@ -30,20 +30,22 @@ class ComparePanelQtTests(unittest.TestCase):
         cls.app = _app()
 
     def test_compare_panel_renders_layout_and_predictions(self) -> None:
-        dataset = load_benchmark(DatasetConfig(name="wine", random_state=2))
+        dataset = load_benchmark(DatasetConfig(name="iris", random_state=2))
         sample = build_analysis_sample(dataset, "val", 0, language="en")
         baseline_model = ModularMLP(
             input_size=dataset.input_size,
-            hidden_sizes=(16, 8),
-            output_size=dataset.output_size,
-            layout=parse_layout_spec("relu|relu", (16, 8)),
+            hidden_sizes=(8,),
+            output_size=dataset.model_output_size,
+            num_classes=dataset.output_size,
+            layout=parse_layout_spec("relu", (8,)),
             random_state=2,
         )
         current_model = ModularMLP(
             input_size=dataset.input_size,
-            hidden_sizes=(16, 8),
-            output_size=dataset.output_size,
-            layout=parse_layout_spec("relu|tanh", (16, 8)),
+            hidden_sizes=(8,),
+            output_size=dataset.model_output_size,
+            num_classes=dataset.output_size,
+            layout=parse_layout_spec("tanh", (8,)),
             random_state=3,
         )
         payload = build_compare_payload(

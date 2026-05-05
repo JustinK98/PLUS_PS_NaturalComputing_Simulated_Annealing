@@ -1,9 +1,9 @@
-"""Datensatz-Logik fuer die drei kleinen Klassifikations-Benchmarks.
+"""Datensatz-Logik fuer die CSV-Benchmark-Suite des Playground-Projekts.
 
 Didaktische Idee dieser Datei:
 
-- Der Rest des Projekts soll nicht wissen muessen, wie scikit-learn Datensaetze
-  intern liefert.
+- Der Rest des Projekts soll nicht wissen muessen, wie die CSV-Dateien
+  des Basics-Teams aufgebaut sind.
 - Stattdessen bekommt der Rest des Codes immer ein einheitliches `DatasetBundle`.
 - Alle Schritte rund um Laden, Standardisierung und Split liegen an einer Stelle.
 
@@ -12,6 +12,7 @@ Wenn spaeter neue Benchmarks dazukommen sollen, ist dies die richtige Datei.
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,10 +23,10 @@ except ImportError as exc:
         "Dieses Projekt benoetigt NumPy. Installation z. B. mit 'pip install numpy'."
     ) from exc
 
-from configs import DatasetConfig, SUPPORTED_BENCHMARKS
+from benchmark_registry import OFFICIAL_BENCHMARKS, benchmark_spec
+from configs import ALL_BENCHMARKS, DatasetConfig
 
 try:
-    from sklearn.datasets import load_breast_cancer, load_digits, load_wine
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import StandardScaler
 except ImportError as exc:
@@ -58,6 +59,7 @@ class DatasetBundle:
     target_names: tuple[str, ...]
     input_size: int
     output_size: int
+    model_output_size: int
     scaler: Any | None = None
 
     @property
@@ -79,15 +81,6 @@ class DatasetBundle:
         return len(self.y_test)
 
 
-# Mapping von benutzerfreundlichen Namen auf scikit-learn-Loader.
-# Wer spaeter weitere Datensaetze hinzufuegt, erweitert genau diese Tabelle.
-RAW_DATASET_LOADERS = {
-    "breast_cancer": load_breast_cancer,
-    "wine": load_wine,
-    "digits": load_digits,
-}
-
-
 def load_benchmark(config: DatasetConfig) -> DatasetBundle:
     """Laedt einen Benchmark, skaliert ihn und erzeugt Train/Val/Test-Splits.
 
@@ -102,68 +95,61 @@ def load_benchmark(config: DatasetConfig) -> DatasetBundle:
     Training auslaeuft.
     """
 
+    if config.name in OFFICIAL_BENCHMARKS:
+        return _load_csv_benchmark_bundle(config)
+
     if config.name == "test_activation":
         return _load_test_activation_bundle(config)
 
-    if config.name not in RAW_DATASET_LOADERS:
-        supported = ", ".join(SUPPORTED_BENCHMARKS)
-        raise ValueError(
-            f"Unbekannter Benchmark '{config.name}'. Erlaubt sind: {supported}"
-        )
+    supported = ", ".join(ALL_BENCHMARKS)
+    raise ValueError(f"Unbekannter Benchmark '{config.name}'. Erlaubt sind: {supported}")
+
+
+def describe_dataset(bundle: DatasetBundle) -> str:
+    """Erzeugt eine kurze deutschsprachige Ein-Zeilen-Beschreibung.
+
+    Diese Funktion ist vor allem fuer spaetere Erweiterungen praktisch, zum
+    Beispiel fuer Log-Dateien oder Tabellenansichten.
+    """
+
+    return (
+        f"{bundle.name}: {bundle.input_size} Eingaben, {bundle.output_size} Klassen, "
+        f"{bundle.model_output_size} Output-Neuronen, "
+        f"Train/Val/Test = {bundle.train_size}/{bundle.validation_size}/{bundle.test_size}"
+    )
+
+
+def _load_csv_benchmark_bundle(config: DatasetConfig) -> DatasetBundle:
+    """Laedt einen offiziellen Benchmark aus den versionierten CSV-Dateien."""
 
     if not 0.0 < config.validation_size < 1.0:
         raise ValueError("validation_size muss zwischen 0 und 1 liegen.")
-    if not 0.0 < config.test_size < 1.0:
-        raise ValueError("test_size muss zwischen 0 und 1 liegen.")
-    if config.validation_size + config.test_size >= 1.0:
-        raise ValueError("validation_size + test_size muss kleiner als 1 sein.")
 
-    # scikit-learn liefert typischerweise ein Bunch-Objekt mit `data` und `target`.
-    raw_dataset = RAW_DATASET_LOADERS[config.name]()
-    X = np.asarray(raw_dataset.data, dtype=np.float64)
-    y = np.asarray(raw_dataset.target, dtype=np.int64)
-
-    # Zuerst trennen wir einen finalen Test-Split ab.
-    # Dieser Test-Split wird waehrend des Trainings nicht benutzt.
-    X_train_val, X_test, y_train_val, y_test = train_test_split(
-        X,
-        y,
-        test_size=config.test_size,
-        stratify=y,
-        random_state=config.random_state,
+    spec = benchmark_spec(config.name)
+    X_train_full, y_train_full = _read_csv_dataset(
+        spec.train_csv,
+        feature_columns=spec.feature_columns,
+        label_column=spec.label_column,
     )
-
-    # Danach teilen wir den verbleibenden Rest weiter in Train und Validation.
-    # Die Umrechnung ist noetig, weil validation_size als Anteil vom Gesamtdatensatz
-    # gedacht ist, `train_test_split` hier aber auf den bereits verkleinerten Rest arbeitet.
-    validation_share_inside_train_val = config.validation_size / (1.0 - config.test_size)
+    X_test_raw, y_test = _read_csv_dataset(
+        spec.test_csv,
+        feature_columns=spec.feature_columns,
+        label_column=spec.label_column,
+    )
     X_train, X_val, y_train, y_val = train_test_split(
-        X_train_val,
-        y_train_val,
-        test_size=validation_share_inside_train_val,
-        stratify=y_train_val,
+        X_train_full,
+        y_train_full,
+        test_size=config.validation_size,
+        stratify=y_train_full,
         random_state=config.random_state,
     )
 
-    # Standardisierung nur auf Basis der Trainingsdaten lernen.
     scaler = StandardScaler()
     X_train_raw = X_train.copy()
     X_val_raw = X_val.copy()
-    X_test_raw = X_test.copy()
     X_train = scaler.fit_transform(X_train)
     X_val = scaler.transform(X_val)
-    X_test = scaler.transform(X_test)
-
-    # Manche Datensaetze haben echte Feature-Namen, andere nicht.
-    # Dann vergeben wir einfache Namen wie x0, x1, x2, ...
-    feature_names = getattr(raw_dataset, "feature_names", None)
-    if feature_names is None:
-        feature_names = [f"x{i}" for i in range(X.shape[1])]
-
-    # Zielklassen-Namen, falls vom Datensatz bereitgestellt.
-    target_names = getattr(raw_dataset, "target_names", None)
-    if target_names is None:
-        target_names = [str(label) for label in np.unique(y)]
+    X_test = scaler.transform(X_test_raw)
 
     return DatasetBundle(
         name=config.name,
@@ -176,25 +162,41 @@ def load_benchmark(config: DatasetConfig) -> DatasetBundle:
         X_train_raw=X_train_raw,
         X_val_raw=X_val_raw,
         X_test_raw=X_test_raw,
-        feature_names=tuple(str(name) for name in feature_names),
-        target_names=tuple(str(name) for name in target_names),
-        input_size=X.shape[1],
-        output_size=len(np.unique(y)),
+        feature_names=spec.feature_columns,
+        target_names=spec.target_names,
+        input_size=len(spec.feature_columns),
+        output_size=spec.class_count,
+        model_output_size=spec.model_output_size,
         scaler=scaler,
     )
 
 
-def describe_dataset(bundle: DatasetBundle) -> str:
-    """Erzeugt eine kurze deutschsprachige Ein-Zeilen-Beschreibung.
+def _read_csv_dataset(
+    path,
+    *,
+    feature_columns: tuple[str, ...],
+    label_column: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Liest Feature- und Label-Arrays aus einem Benchmark-CSV."""
 
-    Diese Funktion ist vor allem fuer spaetere Erweiterungen praktisch, zum
-    Beispiel fuer Log-Dateien oder Tabellenansichten.
-    """
-
-    return (
-        f"{bundle.name}: {bundle.input_size} Eingaben, {bundle.output_size} Klassen, "
-        f"Train/Val/Test = {bundle.train_size}/{bundle.validation_size}/{bundle.test_size}"
-    )
+    rows: list[list[float]] = []
+    labels: list[int] = []
+    with open(path, newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        missing_columns = [
+            column
+            for column in (*feature_columns, label_column)
+            if column not in (reader.fieldnames or [])
+        ]
+        if missing_columns:
+            missing = ", ".join(missing_columns)
+            raise ValueError(f"CSV '{path}' fehlt Spalten: {missing}")
+        for row in reader:
+            rows.append([float(row[column]) for column in feature_columns])
+            labels.append(int(row[label_column]))
+    if not rows:
+        raise ValueError(f"CSV '{path}' enthaelt keine Datenzeilen.")
+    return np.asarray(rows, dtype=np.float64), np.asarray(labels, dtype=np.int64)
 
 
 def _load_test_activation_bundle(config: DatasetConfig) -> DatasetBundle:
@@ -259,5 +261,6 @@ def _load_test_activation_bundle(config: DatasetConfig) -> DatasetBundle:
         target_names=("Klasse 0", "Klasse 1"),
         input_size=3,
         output_size=2,
+        model_output_size=2,
         scaler=scaler,
     )
