@@ -19,26 +19,6 @@ The same core model and benchmark pipeline is reused across all modes.
 
 ## 2. The GUI Modes
 
-### Presentation Mode
-
-Use Presentation Mode when you want to explain the project live without exposing all expert controls.
-
-Typical use:
-
-- choose `Neural Network Preview` for a 5-7 minute explanation of one concrete model
-- choose `Simulated Annealing Preview` for a 5-7 minute explanation of the search process
-- click through the slides from problem statement to takeaway
-
-Best for:
-
-- classroom demos
-- oral presentations
-- first contact before opening Demo or Playground Mode
-
-Presentation Mode uses fixed `concentric_circles` defaults so that the visual story remains stable.
-
-For the prepared talk flow, use [PRESENTATION_SCRIPT.md](PRESENTATION_SCRIPT.md). It contains slide-by-slide speaker text, click instructions, and a fallback route for the live demo.
-
 ### Activation Workflow
 
 Use Activation Workflow when you want the complete project flow in one window.
@@ -56,41 +36,6 @@ Best for:
 - explaining the actual project pipeline
 - comparing manual layout choices against SA-found layouts
 - producing the clearest result tables for discussion
-
-### Demo Mode
-
-Use Demo Mode when you want to understand one concrete network.
-
-Typical use:
-
-- choose a benchmark
-- inspect one visible sample
-- change activations
-- train step by step
-- click neurons and inspect local computations
-
-Best for:
-
-- first contact with the project
-- understanding forward and backward behavior
-- understanding what activations do
-
-### Playground Mode
-
-Use Playground Mode when you want to see one simulated annealing run in detail.
-
-Typical use:
-
-- define a start layout
-- choose an objective
-- choose neighborhood moves
-- configure temperature and cooling
-- run simulated annealing step by step
-
-Best for:
-
-- understanding state, neighbor, temperature, and acceptance
-- comparing start layout, candidate, current state, and best state
 
 ### Experiment Builder
 
@@ -152,7 +97,7 @@ In the GUI, the layout can be edited:
 
 A sample is one concrete input example.
 
-In Demo and Playground, one visible sample is used for inspection:
+In Activation Workflow, one visible sample is used for inspection:
 
 - prediction
 - target
@@ -172,7 +117,7 @@ It affects:
 
 - data splitting
 - weight initialization
-- candidate training reproducibility
+- online-delta batch order and candidate proposals
 - random search sampling
 
 In the Experiment Builder, multiple seeds are important because one single run may be misleading.
@@ -248,12 +193,9 @@ Possible neighborhood operations:
 
 ### Objective
 
-The objective is currently based on validation metrics:
+For online-delta SA, the search objective is loss-based. A candidate layout is evaluated with the same weights and the same mini-batch before any additional training.
 
-- `validation_loss`
-- `validation_accuracy`
-
-Internally, the search compares candidates in a consistent way so that it can decide whether one state is better or worse.
+Accuracy is still reported, but it is too coarse as the primary acceptance signal because small probability improvements may not change the predicted class yet.
 
 ### Temperature
 
@@ -341,9 +283,15 @@ Number of full passes over the training split.
 - too few: undertrained
 - too many: more runtime, possible overfitting
 
+### SA Evaluation Mode
+
+The default mode is `online_delta`.
+
+It measures the current mini-batch loss, applies a candidate activation layout to the same weights, measures the same mini-batch again without training, and lets SA decide based on this immediate loss delta.
+
 ### Candidate Epochs
 
-In simulated annealing, this is the training budget per candidate layout.
+Candidate Epochs are only used by the legacy `short_retrain` SA mode.
 
 - too few: candidate score can be noisy
 - more: fairer comparison, but slower search
@@ -375,22 +323,14 @@ Stop threshold once the search has cooled enough.
 
 ## 8. Suggested First Workflows
 
-### Demo Mode
-
-1. start with `concentric_circles`
-2. keep hidden sizes small
-3. inspect one sample
-4. compare `relu` and `tanh`
-5. train step by step
-
-### Playground Mode
+### Activation Workflow
 
 1. start with `concentric_circles`
 2. use a simple start layout like `relu`
-3. choose `validation_loss`
-4. use `candidate_epochs = 10`
-5. use geometric cooling
-6. inspect start, candidate, current, and best states
+3. inspect one sample, one neuron, and the stepper
+4. train the manual layout once
+5. run Online Delta SA step by step
+6. run the final layout comparison
 
 ### Experiment Builder
 

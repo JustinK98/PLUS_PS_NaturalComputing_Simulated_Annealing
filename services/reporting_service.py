@@ -414,7 +414,7 @@ def _format_topology(input_size: int, hidden_sizes: tuple[int, ...], output_size
 
 def _default_interpretation(benchmark: str) -> str:
     if benchmark == "concentric_circles":
-        return "Main demo case; grid baseline currently gives the clearest positive learning signal."
+        return "Primary case; grid baseline currently gives the clearest positive learning signal."
     if benchmark == "iris":
         return "Multiclass sanity case; layout grid is strong, SA needs more tuning."
     if benchmark == "crossing_spirals":

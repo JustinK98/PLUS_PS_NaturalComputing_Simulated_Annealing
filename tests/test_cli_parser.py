@@ -19,32 +19,35 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(args.gui_mode, "expert")
         self.assertEqual(args.gui_language, "en")
 
-    def test_presentation_mode_is_valid_gui_mode(self) -> None:
-        args = self.parser.parse_args(["gui", "--mode", "presentation"])
-        self.assertEqual(resolve_command(args), "gui")
-        self.assertEqual(args.gui_app_mode, "presentation")
-
     def test_activation_workflow_is_default_gui_mode(self) -> None:
         args = self.parser.parse_args(["gui"])
         self.assertEqual(resolve_command(args), "gui")
         self.assertEqual(args.gui_app_mode, "activation_workflow")
 
-        normalized = _normalize_compat_argv(["--mode", "presentation"])
+        normalized = _normalize_compat_argv(["--mode", "activation_workflow"])
         args = self.parser.parse_args(normalized)
         self.assertEqual(resolve_command(args), "gui")
-        self.assertEqual(args.gui_app_mode, "presentation")
+        self.assertEqual(args.gui_app_mode, "activation_workflow")
 
     def test_legacy_gui_flag_maps_to_gui_command(self) -> None:
-        normalized = _normalize_compat_argv(["--gui", "--gui-app-mode", "playground"])
+        normalized = _normalize_compat_argv(["--gui", "--gui-app-mode", "activation_workflow"])
         args = self.parser.parse_args(normalized)
         self.assertEqual(resolve_command(args), "gui")
-        self.assertEqual(args.gui_app_mode, "playground")
+        self.assertEqual(args.gui_app_mode, "activation_workflow")
 
     def test_top_level_mode_alias_maps_to_gui_command(self) -> None:
-        normalized = _normalize_compat_argv(["--mode", "playground"])
+        normalized = _normalize_compat_argv(["--mode", "activation_workflow"])
         args = self.parser.parse_args(normalized)
         self.assertEqual(resolve_command(args), "gui")
-        self.assertEqual(args.gui_app_mode, "playground")
+        self.assertEqual(args.gui_app_mode, "activation_workflow")
+
+    def test_removed_gui_modes_are_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--mode", "demo"])
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--mode", "playground"])
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--mode", "presentation"])
 
     def test_run_subcommand_maps_to_single_run(self) -> None:
         args = self.parser.parse_args(["run", "--benchmark", "iris", "--hidden-sizes", "8"])

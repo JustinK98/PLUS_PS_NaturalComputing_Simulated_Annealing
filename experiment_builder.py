@@ -16,6 +16,12 @@ from pathlib import Path
 from typing import Any
 
 from search_spaces import SearchSpaceDefinition
+from configs import (
+    DEFAULT_ONLINE_TRAIN_POLICY,
+    DEFAULT_SA_EVALUATION_MODE,
+    SUPPORTED_ONLINE_TRAIN_POLICIES,
+    SUPPORTED_SA_EVALUATION_MODES,
+)
 
 
 SUPPORTED_EXPERIMENT_RUN_MODES = ("manual_training", "simulated_annealing")
@@ -58,6 +64,8 @@ class ExperimentDefinition:
     weight_scale: float
     epochs: int
     objective_name: str
+    sa_evaluation_mode: str
+    online_train_policy: str
     candidate_epochs: int
     neighborhood_operations: tuple[str, ...]
     start_temperature: float
@@ -81,6 +89,16 @@ class ExperimentDefinition:
             raise ValueError(
                 f"Unbekannte primäre Metrik '{self.primary_metric}'. "
                 f"Erlaubt sind: {', '.join(PRIMARY_METRIC_LABELS)}"
+            )
+        if self.sa_evaluation_mode not in SUPPORTED_SA_EVALUATION_MODES:
+            raise ValueError(
+                f"Unbekannter SA-Bewertungsmodus '{self.sa_evaluation_mode}'. "
+                f"Erlaubt sind: {', '.join(SUPPORTED_SA_EVALUATION_MODES)}"
+            )
+        if self.online_train_policy not in SUPPORTED_ONLINE_TRAIN_POLICIES:
+            raise ValueError(
+                f"Unbekannte Online-Trainingspolicy '{self.online_train_policy}'. "
+                f"Erlaubt sind: {', '.join(SUPPORTED_ONLINE_TRAIN_POLICIES)}"
             )
 
     @property
@@ -119,6 +137,8 @@ class ExperimentDefinition:
             weight_scale=float(payload["weight_scale"]),
             epochs=int(payload["epochs"]),
             objective_name=str(payload["objective_name"]),
+            sa_evaluation_mode=str(payload.get("sa_evaluation_mode", "short_retrain")),
+            online_train_policy=str(payload.get("online_train_policy", DEFAULT_ONLINE_TRAIN_POLICY)),
             candidate_epochs=int(payload["candidate_epochs"]),
             neighborhood_operations=tuple(str(value) for value in payload["neighborhood_operations"]),
             start_temperature=float(payload["start_temperature"]),

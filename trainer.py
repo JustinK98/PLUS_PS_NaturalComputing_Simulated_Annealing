@@ -144,6 +144,31 @@ def train_model_with_callback(
     )
 
 
+def evaluate_batch(
+    model: ModularMLP,
+    X_batch: np.ndarray,
+    y_batch: np.ndarray,
+) -> tuple[float, float]:
+    """Bewertet genau einen Mini-Batch ohne Gewichtsupdate."""
+
+    return model.evaluate(X_batch, y_batch)
+
+
+def train_one_batch(
+    model: ModularMLP,
+    X_batch: np.ndarray,
+    y_batch: np.ndarray,
+    learning_rate: float,
+) -> float:
+    """Fuehrt genau ein Mini-Batch-Gradient-Update aus und liefert den Batch-Loss."""
+
+    if learning_rate <= 0.0:
+        raise ValueError("learning_rate muss positiv sein.")
+    batch_loss, gradients = model.loss_and_gradients(X_batch, y_batch)
+    model.apply_gradients(gradients, learning_rate)
+    return float(batch_loss)
+
+
 def train_model(
     model: ModularMLP, dataset: DatasetBundle, config: TrainingConfig
 ) -> TrainingResult:

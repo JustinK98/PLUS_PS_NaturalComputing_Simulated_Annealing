@@ -10,7 +10,15 @@ from PySide6 import QtCore, QtWidgets
 
 from activations import parse_layout_spec
 from benchmarks import load_benchmark
-from configs import DatasetConfig, GuiExperimentConfig, OUTPUT_DIR, SUPPORTED_BENCHMARKS, default_hidden_sizes
+from configs import (
+    DatasetConfig,
+    GuiExperimentConfig,
+    OUTPUT_DIR,
+    SUPPORTED_BENCHMARKS,
+    SUPPORTED_ONLINE_TRAIN_POLICIES,
+    SUPPORTED_SA_EVALUATION_MODES,
+    default_hidden_sizes,
+)
 from experiment_builder import ExperimentDefinition
 from model import ModularMLP
 from search_spaces import SearchSpaceDefinition, SearchValueDefinition
@@ -84,6 +92,7 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
         self.run_mode_combo.currentTextChanged.connect(self._update_run_mode_visibility)
         self.primary_metric_combo = QtWidgets.QComboBox()
         self.primary_metric_combo.addItems(("validation_accuracy", "validation_loss"))
+        self.primary_metric_combo.setCurrentText(definition.primary_metric)
         setup_layout.addRow(self.make_help_label("Experiment ID", "experiment_setup"), self.experiment_id_edit)
         setup_layout.addRow(self.make_help_label("Benchmark", "benchmark"), self.benchmark_combo)
         setup_layout.addRow(self.make_help_label("Hidden Sizes", "hidden_sizes"), self.hidden_sizes_edit)
@@ -130,6 +139,13 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
         sa_layout = QtWidgets.QFormLayout(self.sa_group)
         self.objective_combo = QtWidgets.QComboBox()
         self.objective_combo.addItems(("validation_loss", "validation_accuracy"))
+        self.sa_mode_combo = QtWidgets.QComboBox()
+        self.sa_mode_combo.addItems(SUPPORTED_SA_EVALUATION_MODES)
+        self.sa_mode_combo.setCurrentText(definition.sa_evaluation_mode)
+        self.sa_mode_combo.currentTextChanged.connect(self._update_sa_mode_visibility)
+        self.online_train_policy_combo = QtWidgets.QComboBox()
+        self.online_train_policy_combo.addItems(SUPPORTED_ONLINE_TRAIN_POLICIES)
+        self.online_train_policy_combo.setCurrentText(definition.online_train_policy)
         self.candidate_epochs_spin = QtWidgets.QSpinBox()
         self.candidate_epochs_spin.setRange(1, 500)
         self.candidate_epochs_spin.setValue(definition.candidate_epochs)
@@ -150,6 +166,8 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
         self.min_temp_spin = QtWidgets.QDoubleSpinBox()
         self.min_temp_spin.setRange(0.0, 10.0)
         self.min_temp_spin.setValue(definition.min_temperature)
+        sa_layout.addRow(self.make_help_label("SA Evaluation Mode", "objective"), self.sa_mode_combo)
+        sa_layout.addRow(self.make_help_label("Online Train Policy", "objective"), self.online_train_policy_combo)
         sa_layout.addRow(self.make_help_label("Objective", "objective"), self.objective_combo)
         sa_layout.addRow(self.make_help_label("Candidate Epochs", "objective"), self.candidate_epochs_spin)
         sa_layout.addRow(self.make_help_label("Start Temperature", "annealing_config"), self.start_temp_spin)
@@ -259,6 +277,7 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
         self.retranslate()
         self.apply_detail_mode()
         self._update_run_mode_visibility()
+        self._update_sa_mode_visibility()
 
     def retranslate(self) -> None:
         self.setup_group.setTitle("Experiment Setup" if self.preferences.language == "en" else "Experiment Setup")
@@ -307,6 +326,16 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
                 combo, edit = self.search_rows[parameter_name]
                 combo.setCurrentText("fixed")
                 edit.clear()
+        self._update_sa_mode_visibility()
+
+    def _update_sa_mode_visibility(self) -> None:
+        is_online = self.run_mode_combo.currentText() == "simulated_annealing" and self.sa_mode_combo.currentText() == "online_delta"
+        if is_online:
+            self.primary_metric_combo.setCurrentText("validation_loss")
+        self.candidate_epochs_spin.setEnabled(not is_online)
+        self.objective_combo.setEnabled(not is_online)
+        self.online_train_policy_combo.setEnabled(is_online)
+        self.primary_metric_combo.setEnabled(not is_online)
 
     def _build_search_space(self) -> SearchSpaceDefinition:
         search_type = self.search_type_combo.currentText()
@@ -370,7 +399,9 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
             layout_spec=self.layout_editor.layout_spec(),
             run_mode=self.run_mode_combo.currentText(),
             seeds=seeds or (self.config.random_state,),
-            primary_metric=self.primary_metric_combo.currentText(),
+            primary_metric="validation_loss"
+            if self.run_mode_combo.currentText() == "simulated_annealing" and self.sa_mode_combo.currentText() == "online_delta"
+            else self.primary_metric_combo.currentText(),
             language=self.preferences.language,
             save_json=True,
             output_dir=normalize_output_path(self.output_dir_edit.text(), str(OUTPUT_DIR / "experiments")),
@@ -380,6 +411,8 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
             weight_scale=self.weight_spin.value(),
             epochs=self.epochs_spin.value(),
             objective_name=self.objective_combo.currentText(),
+            sa_evaluation_mode=self.sa_mode_combo.currentText(),
+            online_train_policy=self.online_train_policy_combo.currentText(),
             candidate_epochs=self.candidate_epochs_spin.value(),
             neighborhood_operations=("set_neuron", "fill_layer", "swap_neurons"),
             start_temperature=self.start_temp_spin.value(),

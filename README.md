@@ -18,11 +18,8 @@ python main.py
 Start the GUI directly:
 
 ```bash
-python main.py gui --mode demo
-python main.py gui --mode playground
-python main.py gui --mode experiment_builder
-python main.py gui --mode presentation
 python main.py gui --mode activation_workflow
+python main.py gui --mode experiment_builder
 ```
 
 Useful GUI options:
@@ -78,19 +75,11 @@ python main.py --show-layout-help
 - train / validation / test evaluation
 - sample-level inspection, neuron tracker, activation curve, and stepper
 - simulated annealing over activation layouts
+- online-delta SA evaluation using same weights and same mini-batch
 - experiment builder with multi-seed runs, grid search, random search, and JSON result storage
 - bilingual Qt GUI in German and English
 
 ## Main Workspaces
-
-### Presentation
-
-Use `Presentation` for a guided 10-15 minute live explanation:
-
-- choose between Neural Network Preview and Simulated Annealing Preview
-- click through one concept per slide
-- use fixed `concentric_circles` defaults for a reliable demo
-- show formulas, network visuals, training plots, and annealing decisions without the full tool UI
 
 ### Activation Workflow
 
@@ -99,28 +88,8 @@ Use `Activation Workflow` for the full project flow in one window:
 - load one official CSV benchmark
 - choose or edit an activation layout
 - train that layout directly
-- optionally run simulated annealing over layouts
-- finally train and compare start, best, end, random, and homogeneous baseline layouts under identical conditions
-
-### Demo
-
-Use `Demo` to understand one concrete network:
-
-- inspect one sample
-- train step by step
-- read the training plot
-- click neurons and inspect local computations
-- compare current state against a stored baseline
-
-### Playground
-
-Use `Playground` to inspect one simulated annealing run:
-
-- define a start layout
-- choose an objective
-- select neighborhood operations
-- step SA manually or run to completion
-- compare start, candidate, current, best, and end states
+- optionally run simulated annealing over layouts with online-delta scoring or the legacy short-retrain mode
+- finally compare retrained layouts against inherited SA model states under identical evaluation conditions
 
 ### Experiment Builder
 

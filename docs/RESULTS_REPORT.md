@@ -1,6 +1,6 @@
 # Activation Playground: aktueller Ergebnisstand
 
-Stand: 2026-05-04
+Stand: 2026-05-12
 
 ## Forschungsfrage
 
@@ -8,12 +8,13 @@ Das Projekt untersucht, wie sich die Verteilung von Aktivierungsfunktionen in kl
 
 - Das normale Training optimiert die Gewichte eines festen Netzes.
 - Simulated Annealing sucht über diskrete Aktivierungs-Layouts.
-- Ein Layout wird bewertet, indem das zugehörige Netz kurz trainiert und auf Validation-Daten gemessen wird.
-- Die finale Aussage entsteht erst, wenn ausgewählte Layouts unter gleichen Trainingsbedingungen erneut trainiert und verglichen werden.
+- Neue SA-Experimente verwenden `online_delta`: gleiche Gewichte, gleicher Mini-Batch, Layout ändern, Loss direkt vor/nach der Änderung vergleichen.
+- Bei akzeptierter Änderung wird dasselbe Netz auf dem Mini-Batch weitertrainiert; die Suche ist also ein kontinuierlicher Trainingsprozess.
+- Die finale Aussage entsteht erst, wenn ausgewählte Layouts und geerbte Suchzustände unter gleichen Trainingsbedingungen verglichen werden.
 
 Der Gesamtworkflow lautet:
 
-`CSV Benchmark laden -> Layout wählen -> optional SA suchen -> finale Layouts trainieren -> Layouts vergleichen -> Ergebnisse berichten`
+`CSV Benchmark laden -> Layout wählen -> optional online-delta SA suchen -> finale Layouts / geerbte Netze vergleichen -> Ergebnisse berichten`
 
 ## Benchmark-Basis
 
@@ -66,7 +67,7 @@ Interpretation:
 
 ## Simulated-Annealing-Ergebnisse
 
-Die SA-Runs verwenden aktuell ein kleines Demo-Budget. Die Suchphase bewertet Kandidaten mit kurzen Trainingsläufen. Danach wird das gefundene `best_layout_from_sa` mit den offiziellen Epochen final trainiert.
+Die bisher berichteten SA-Runs verwenden noch das historische `short_retrain`-Budget. Die neue Standardimplementierung nutzt `online_delta`: gleiche Gewichte, gleicher Mini-Batch, direkte Loss-Änderung ohne Training, danach optionales Training bei akzeptierter Änderung. Beide Modi bleiben vergleichbar, aber neue Experimente sollten `online_delta` separat ausweisen.
 
 | Benchmark | Annealing Score | Search Val Acc | Final Val Acc | Final Test Acc |
 |---|---:|---:|---:|---:|

@@ -215,10 +215,7 @@ def run_interactive_setup(
         args.gui_app_mode = _prompt_choice(
             label="GUI-Arbeitsmodus",
             explanation=(
-                "demo ist fuer Verstehen, Visualisieren und schrittweises Training gedacht.\n"
                 "activation_workflow verbindet Training, SA-Suche und finalen Layout-Vergleich.\n"
-                "playground erweitert dieselbe Codebasis um Simulated Annealing und eine "
-                "sichtbare Optimierung ueber Aktivierungs-Layouts.\n"
                 "experiment_builder ist fuer reproduzierbare Multi-Seed-Runs, JSON-Ergebnisse "
                 "und systematische Suchlaeufe gedacht."
             ),
@@ -261,8 +258,8 @@ def run_interactive_setup(
             args.save_prefix = _prompt_text(
                 label="Speicher-Praefix",
                 explanation=(
-                    "Beispiel: 'demo/mein_run'. Dann entstehen Dateien wie\n"
-                    "outputs/demo/mein_run_history.png"
+                    "Beispiel: 'workflow/mein_run'. Dann entstehen Dateien wie\n"
+                    "outputs/workflow/mein_run_history.png"
                 ),
                 default=default_prefix,
             )

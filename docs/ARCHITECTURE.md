@@ -38,10 +38,8 @@ The codebase is split into four practical layers:
 
 ### GUI Entry
 
-- `python main.py gui --mode demo`
-- `python main.py gui --mode playground`
+- `python main.py gui --mode activation_workflow`
 - `python main.py gui --mode experiment_builder`
-- `python main.py gui --mode presentation`
 
 Qt startup lives in:
 
@@ -90,16 +88,21 @@ Qt startup lives in:
   - cooling schedules
 
 - `annealing_objectives.py`
-  - candidate evaluation after short training
+  - legacy candidate evaluation after short training
 
 - `annealing_runner.py`
-  - complete SA runs
+  - legacy short-retrain SA runs
 
 - `services/annealing_service.py`
-  - headless annealing execution
+  - legacy short-retrain annealing execution
 
 - `services/annealing_session_service.py`
-  - stepwise SA session snapshots for the Qt playground
+  - legacy short-retrain stepwise SA session snapshots
+
+- `services/online_annealing_training_service.py`
+  - default online-delta SA mode
+  - measures candidate AF changes on the same weights and same mini-batch
+  - trains only after the SA decision
 
 ## 5. Experiment System
 
@@ -136,23 +139,13 @@ Qt startup lives in:
 
 ### Workspaces
 
-- `ui_qt/workspaces/presentation_workspace.py`
-  - guided slide-first presentation mode
-  - neural-network preview track
-  - simulated-annealing preview track
-  - fixed Concentric Circles defaults for live demos
-
-- `ui_qt/workspaces/demo_workspace.py`
-  - sample inspection
-  - training
-  - compare
-  - neuron tracker
-  - stepper
-
-- `ui_qt/workspaces/playground_workspace.py`
-  - SA step flow
-  - snapshots
-  - decision/history panels
+- `ui_qt/workspaces/activation_workflow_workspace.py`
+  - primary GUI workflow
+  - benchmark and layout editing
+  - sample inspection, network view, neuron tracker, and stepper
+  - manual training
+  - online-delta SA search and legacy short-retrain comparison mode
+  - final layout comparison
 
 - `ui_qt/workspaces/experiment_builder_workspace.py`
   - experiment definition editing
@@ -167,7 +160,6 @@ Qt startup lives in:
 - `ui_qt/widgets/neuron_detail_panel.py`
 - `ui_qt/widgets/activation_curve_widget.py`
 - `ui_qt/widgets/stepper_panel.py`
-- `ui_qt/widgets/compare_panel.py`
 - `ui_qt/widgets/annealing_*_panel.py`
 - `ui_qt/widgets/help_dialog.py`
 - `ui_qt/widgets/info_button.py`
@@ -195,39 +187,23 @@ Important services:
 - `services/stepper_service.py`
   - forward/backward teaching entries
 
-- `services/compare_service.py`
-  - baseline/current comparison payloads
-
 - `services/help_service.py`
   - handbook, workspace help, and field-level didactic content
 
 - `services/training_service.py`
   - single-run training from CLI or services
 
-- `services/training_session_service.py`
-  - incremental training snapshots for Demo
-
-- `services/task_runner.py`
-  - generic background-task abstraction used outside the Qt event model
-
 ## 8. Data Flow
 
-### Demo
+### Activation Workflow
 
 1. load benchmark
 2. build activation layout
 3. build preview model
 4. inspect one sample through service payloads
 5. train in chunks
-6. update plot, network, compare, and neuron details
-
-### Playground
-
-1. create start layout
-2. create annealing session
-3. evaluate start
-4. step or complete SA
-5. render snapshots, decision text, history, and network projection
+6. optionally run online-delta SA over AF layouts
+7. compare start, best, end, random, and homogeneous baselines under identical final training conditions
 
 ### Experiment Builder
 
@@ -243,9 +219,9 @@ The current test suite is intentionally conservative:
 - parser and CLI smoke tests
 - service tests
 - Qt widget tests for key didactic panels
-- Qt smoke tests for all workspaces
+- Qt smoke tests for active workspaces
 
 The repo should be kept green with:
 
-- `python -m unittest discover -s tests -v`
-- offscreen Qt launch smokes for all three workspaces
+- `python -m pytest tests -q`
+- offscreen Qt launch smokes for both active workspaces

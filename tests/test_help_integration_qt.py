@@ -11,10 +11,8 @@ from PySide6 import QtWidgets
 from configs import GuiExperimentConfig
 from ui_qt.shell.main_window import MainWindow
 from ui_qt.state import WorkspacePreferences
-from ui_qt.widgets.info_button import InfoButton
-from ui_qt.workspaces.demo_workspace import DemoWorkspace
+from ui_qt.workspaces.activation_workflow_workspace import ActivationWorkflowWorkspace
 from ui_qt.workspaces.experiment_builder_workspace import ExperimentBuilderWorkspace
-from ui_qt.workspaces.playground_workspace import PlaygroundWorkspace
 
 
 def _app() -> QtWidgets.QApplication:
@@ -34,7 +32,7 @@ class HelpIntegrationQtTests(unittest.TestCase):
             GuiExperimentConfig(
                 benchmark="iris",
                 hidden_sizes=(8,),
-                app_mode="demo",
+                app_mode="activation_workflow",
                 layout_spec="relu",
                 mode="expert",
                 language="en",
@@ -47,37 +45,24 @@ class HelpIntegrationQtTests(unittest.TestCase):
         window.handbook_dialog.close()
         window.close()
 
-    def test_demo_workspace_has_help_tab_and_info_buttons(self) -> None:
-        workspace = DemoWorkspace(
+    def test_activation_workflow_has_help_tab(self) -> None:
+        workspace = ActivationWorkflowWorkspace(
             GuiExperimentConfig(
                 benchmark="iris",
                 hidden_sizes=(8,),
-                app_mode="demo",
+                app_mode="activation_workflow",
                 layout_spec="relu",
                 mode="expert",
                 language="de",
             ),
             WorkspacePreferences(language="de", detail_mode="expert"),
         )
-        self.assertIn("Empfohlener Ablauf", workspace.help_text.toPlainText())
-        self.assertGreaterEqual(len(workspace.findChildren(InfoButton)), 6)
-        workspace.tabs.setCurrentIndex(1)
+        self.assertIn("Activation Workflow", workspace.help_text.toPlainText())
+        workspace.tabs.setCurrentIndex(workspace.tabs.count() - 1)
         self.app.processEvents()
-        self.assertIn("Training", workspace.tab_help_button.toolTip())
         workspace.close()
 
-    def test_playground_and_builder_have_real_help_tabs(self) -> None:
-        playground = PlaygroundWorkspace(
-            GuiExperimentConfig(
-                benchmark="concentric_circles",
-                hidden_sizes=(8,),
-                app_mode="playground",
-                layout_spec="relu",
-                mode="expert",
-                language="en",
-            ),
-            WorkspacePreferences(language="en", detail_mode="expert"),
-        )
+    def test_builder_has_real_help_tab(self) -> None:
         builder = ExperimentBuilderWorkspace(
             GuiExperimentConfig(
                 benchmark="iris",
@@ -89,9 +74,7 @@ class HelpIntegrationQtTests(unittest.TestCase):
             ),
             WorkspacePreferences(language="en", detail_mode="expert"),
         )
-        self.assertIn("Recommended workflow", playground.help_text.toPlainText())
         self.assertIn("How to read builder results", builder.help_text.toPlainText())
-        playground.close()
         builder.close()
 
 

@@ -13,8 +13,7 @@ from configs import GuiExperimentConfig
 from model import ModularMLP
 from ui_qt.state import WorkspacePreferences
 from ui_qt.widgets.network_view import NetworkViewWidget
-from ui_qt.workspaces.demo_workspace import DemoWorkspace
-from ui_qt.workspaces.playground_workspace import PlaygroundWorkspace
+from ui_qt.workspaces.activation_workflow_workspace import ActivationWorkflowWorkspace
 
 
 def _app() -> QtWidgets.QApplication:
@@ -82,24 +81,13 @@ class NetworkViewQtTests(unittest.TestCase):
         self.assertGreater(view.transform().m11(), 0.0)
         view.close()
 
-    def test_demo_and_playground_expose_resizable_network_splitters(self) -> None:
+    def test_activation_workflow_exposes_resizable_network_splitter(self) -> None:
         preferences = WorkspacePreferences(language="en", detail_mode="expert")
-        demo = DemoWorkspace(
+        workflow = ActivationWorkflowWorkspace(
             GuiExperimentConfig(
                 benchmark="iris",
                 hidden_sizes=(8,),
-                app_mode="demo",
-                layout_spec="relu",
-                mode="expert",
-                language="en",
-            ),
-            preferences,
-        )
-        playground = PlaygroundWorkspace(
-            GuiExperimentConfig(
-                benchmark="concentric_circles",
-                hidden_sizes=(8,),
-                app_mode="playground",
+                app_mode="activation_workflow",
                 layout_spec="relu",
                 mode="expert",
                 language="en",
@@ -107,12 +95,9 @@ class NetworkViewQtTests(unittest.TestCase):
             preferences,
         )
 
-        self.assertEqual(demo.content_splitter.orientation(), QtCore.Qt.Vertical)
-        self.assertEqual(playground.content_splitter.orientation(), QtCore.Qt.Vertical)
-        self.assertEqual(demo.content_splitter.count(), 2)
-        self.assertEqual(playground.content_splitter.count(), 2)
-        demo.close()
-        playground.close()
+        self.assertEqual(workflow.splitter.orientation(), QtCore.Qt.Horizontal)
+        self.assertEqual(workflow.splitter.count(), 2)
+        workflow.close()
 
 
 if __name__ == "__main__":

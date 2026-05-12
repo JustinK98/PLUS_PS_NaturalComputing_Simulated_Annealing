@@ -35,11 +35,10 @@ SUPPORTED_GUI_MODES = ("beginner", "expert")
 SUPPORTED_GUI_LANGUAGES = ("de", "en")
 SUPPORTED_GUI_APP_MODES = (
     "activation_workflow",
-    "presentation",
-    "demo",
-    "playground",
     "experiment_builder",
 )
+SUPPORTED_SA_EVALUATION_MODES = ("online_delta", "short_retrain")
+SUPPORTED_ONLINE_TRAIN_POLICIES = ("accepted", "improved_only", "none")
 
 
 # Standardwerte fuer einen schnellen Einstieg.
@@ -57,6 +56,8 @@ DEFAULT_VALIDATION_SIZE = 0.2
 DEFAULT_TEST_SIZE = 0.2
 DEFAULT_NEIGHBOR_PREVIEW = 6
 DEFAULT_ANNEALING_OBJECTIVE = "validation_loss"
+DEFAULT_SA_EVALUATION_MODE = "online_delta"
+DEFAULT_ONLINE_TRAIN_POLICY = "accepted"
 DEFAULT_ANNEALING_CANDIDATE_EPOCHS = 20
 DEFAULT_ANNEALING_START_TEMPERATURE = 1.5
 DEFAULT_ANNEALING_COOLING_SCHEDULE = "geometric"

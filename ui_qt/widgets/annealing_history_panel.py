@@ -50,6 +50,16 @@ class AnnealingHistoryPanel(QtWidgets.QWidget):
         self.plot.set_state(state_like)
         lines = []
         for step in snapshot.history[-8:]:
+            if getattr(snapshot, "sa_evaluation_mode", "") == "online_delta":
+                lines.append(
+                    (
+                        f"step={step.step_index} epoch={step.epoch_index} batch={step.batch_index} "
+                        f"accepted={step.accepted} delta={step.delta:+.4f} "
+                        f"before={step.batch_loss_before:.4f} after={step.candidate_loss_after:.4f} "
+                        f"trained={step.trained_after_accept}"
+                    )
+                )
+                continue
             lines.append(
                 (
                     f"step={step.step_index} T={step.temperature:.3f} accepted={step.accepted} "

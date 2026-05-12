@@ -83,10 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="gui_app_mode",
         choices=SUPPORTED_GUI_APP_MODES,
         default=DEFAULT_GUI_APP_MODE,
-        help=(
-            "GUI-Arbeitsmodus: activation_workflow, presentation, demo, "
-            "playground oder experiment_builder."
-        ),
+        help="GUI-Arbeitsmodus: activation_workflow oder experiment_builder.",
     )
     gui_parser.add_argument(
         "--detail-level",
@@ -226,9 +223,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ordner mit Layout-Grid-JSON-Dateien.",
     )
     report_parser.add_argument(
-        "--demo-sa-dir",
+        "--sa-dir",
+        dest="sa_dir",
         default="outputs/demo_sa",
-        help="Ordner mit Demo-SA-Ergebnissen.",
+        help="Ordner mit SA-Ergebnissen fuer Report-Artefakte.",
+    )
+    report_parser.add_argument(
+        "--demo-sa-dir",
+        dest="sa_dir",
+        help=argparse.SUPPRESS,
     )
     report_parser.add_argument(
         "--neighborhood-summary",

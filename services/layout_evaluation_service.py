@@ -33,6 +33,16 @@ class LayoutEvaluationRun:
     metrics: dict[str, float]
     history: dict[str, list[float]]
     model_state: dict[str, object]
+    evaluation_type: str = "retrained"
+
+
+@dataclass(frozen=True)
+class InheritedModelCandidate:
+    """Ein bereits trainierter Modellzustand, der nur evaluiert wird."""
+
+    label: str
+    model_state: dict[str, object]
+    seed: int
 
 
 @dataclass(frozen=True)
@@ -47,6 +57,7 @@ class AggregatedLayoutEvaluation:
     min_metrics: dict[str, float]
     max_metrics: dict[str, float]
     ranking_score: float
+    evaluation_type: str = "retrained"
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,8 @@ class LayoutEvaluationResult:
     runs: tuple[LayoutEvaluationRun, ...]
     aggregated: tuple[AggregatedLayoutEvaluation, ...]
     ranking: tuple[AggregatedLayoutEvaluation, ...]
+    inherited_runs: tuple[LayoutEvaluationRun, ...] = ()
+    combined_ranking: tuple[AggregatedLayoutEvaluation, ...] = ()
 
 
 STANDARD_NEIGHBORHOOD_SETS: dict[str, tuple[str, ...]] = {
@@ -205,6 +218,69 @@ def run_layout_evaluation(request: LayoutEvaluationRequest) -> LayoutEvaluationR
         runs=tuple(runs),
         aggregated=aggregated,
         ranking=ranking,
+        combined_ranking=ranking,
+    )
+
+
+def evaluate_inherited_models(
+    dataset_config: DatasetConfig,
+    candidates: tuple[InheritedModelCandidate, ...],
+    *,
+    primary_metric: str = "validation_loss",
+) -> tuple[LayoutEvaluationRun, ...]:
+    """Evaluiert geerbte Modellzustaende ohne weiteres Training."""
+
+    if primary_metric not in {"validation_loss", "validation_accuracy"}:
+        raise ValueError("primary_metric muss validation_loss oder validation_accuracy sein.")
+
+    runs: list[LayoutEvaluationRun] = []
+    for candidate in candidates:
+        dataset = load_benchmark(
+            DatasetConfig(
+                name=dataset_config.name,
+                validation_size=dataset_config.validation_size,
+                test_size=dataset_config.test_size,
+                random_state=int(candidate.seed),
+            )
+        )
+        model = ModularMLP.from_state_dict(candidate.model_state)
+        runs.append(
+            LayoutEvaluationRun(
+                label=candidate.label,
+                layout_spec=model.layout.to_compact_spec(),
+                seed=int(candidate.seed),
+                metrics=_evaluate_model_metrics(model, dataset),
+                history={},
+                model_state=model.to_state_dict(),
+                evaluation_type="inherited",
+            )
+        )
+    return tuple(runs)
+
+
+def with_inherited_model_evaluations(
+    result: LayoutEvaluationResult,
+    inherited_runs: tuple[LayoutEvaluationRun, ...],
+    primary_metric: str,
+) -> LayoutEvaluationResult:
+    """Ergaenzt einen Retraining-Vergleich um geerbte SA-Modellzustaende."""
+
+    if primary_metric not in {"validation_loss", "validation_accuracy"}:
+        raise ValueError("primary_metric muss validation_loss oder validation_accuracy sein.")
+
+    inherited_aggregated = _aggregate_runs(inherited_runs, primary_metric, evaluation_type="inherited")
+    combined_ranking = tuple(
+        sorted(
+            result.aggregated + inherited_aggregated,
+            key=lambda item: item.ranking_score,
+        )
+    )
+    return LayoutEvaluationResult(
+        runs=result.runs,
+        aggregated=result.aggregated,
+        ranking=result.ranking,
+        inherited_runs=inherited_runs,
+        combined_ranking=combined_ranking,
     )
 
 
@@ -215,6 +291,7 @@ def layout_evaluation_to_dict(result: LayoutEvaluationResult) -> dict[str, objec
         "runs": [
             {
                 "label": run.label,
+                "evaluation_type": run.evaluation_type,
                 "layout_spec": run.layout_spec,
                 "seed": run.seed,
                 "metrics": run.metrics,
@@ -223,9 +300,34 @@ def layout_evaluation_to_dict(result: LayoutEvaluationResult) -> dict[str, objec
             }
             for run in result.runs
         ],
+        "retrained_runs": [
+            {
+                "label": run.label,
+                "evaluation_type": run.evaluation_type,
+                "layout_spec": run.layout_spec,
+                "seed": run.seed,
+                "metrics": run.metrics,
+                "history": run.history,
+                "model_state": run.model_state,
+            }
+            for run in result.runs
+        ],
+        "inherited_runs": [
+            {
+                "label": run.label,
+                "evaluation_type": run.evaluation_type,
+                "layout_spec": run.layout_spec,
+                "seed": run.seed,
+                "metrics": run.metrics,
+                "history": run.history,
+                "model_state": run.model_state,
+            }
+            for run in result.inherited_runs
+        ],
         "aggregated": [
             {
                 "label": item.label,
+                "evaluation_type": item.evaluation_type,
                 "layout_spec": item.layout_spec,
                 "num_runs": item.num_runs,
                 "mean_metrics": item.mean_metrics,
@@ -239,11 +341,22 @@ def layout_evaluation_to_dict(result: LayoutEvaluationResult) -> dict[str, objec
         "ranking": [
             {
                 "label": item.label,
+                "evaluation_type": item.evaluation_type,
                 "layout_spec": item.layout_spec,
                 "ranking_score": item.ranking_score,
                 "mean_metrics": item.mean_metrics,
             }
             for item in result.ranking
+        ],
+        "combined_ranking": [
+            {
+                "label": item.label,
+                "evaluation_type": item.evaluation_type,
+                "layout_spec": item.layout_spec,
+                "ranking_score": item.ranking_score,
+                "mean_metrics": item.mean_metrics,
+            }
+            for item in (result.combined_ranking or result.ranking)
         ],
     }
 
@@ -302,6 +415,7 @@ def save_layout_grid_result(
 def _aggregate_runs(
     runs: tuple[LayoutEvaluationRun, ...],
     primary_metric: str,
+    evaluation_type: str = "retrained",
 ) -> tuple[AggregatedLayoutEvaluation, ...]:
     grouped: dict[str, list[LayoutEvaluationRun]] = {}
     for run in runs:
@@ -333,9 +447,24 @@ def _aggregate_runs(
                 min_metrics=min_metrics,
                 max_metrics=max_metrics,
                 ranking_score=float(ranking_score),
+                evaluation_type=evaluation_type,
             )
         )
     return tuple(aggregated)
+
+
+def _evaluate_model_metrics(model: ModularMLP, dataset) -> dict[str, float]:
+    train_loss, train_accuracy = model.evaluate(dataset.X_train, dataset.y_train)
+    val_loss, val_accuracy = model.evaluate(dataset.X_val, dataset.y_val)
+    test_loss, test_accuracy = model.evaluate(dataset.X_test, dataset.y_test)
+    return {
+        "train_loss": float(train_loss),
+        "val_loss": float(val_loss),
+        "test_loss": float(test_loss),
+        "train_accuracy": float(train_accuracy),
+        "val_accuracy": float(val_accuracy),
+        "test_accuracy": float(test_accuracy),
+    }
 
 
 def _random_layout_spec(hidden_sizes: tuple[int, ...], random_state: int) -> str:

@@ -230,6 +230,16 @@ class ModularMLP:
         cloned_model.biases = [bias_vector.copy() for bias_vector in self.biases]
         return cloned_model
 
+    def set_layout(self, layout: ActivationLayout) -> None:
+        """Tauscht nur das Aktivierungs-Layout aus, ohne Gewichte zu veraendern."""
+
+        if layout.hidden_sizes != self.hidden_sizes:
+            raise ValueError(
+                "Das neue Aktivierungs-Layout muss dieselben Hidden-Sizes haben. "
+                f"Erwartet: {self.hidden_sizes}, erhalten: {layout.hidden_sizes}."
+            )
+        self.layout = layout
+
     def to_state_dict(self) -> dict[str, object]:
         """Serialisiert das Modell inklusive Gewichten und Biases fuer JSON."""
 

@@ -48,4 +48,16 @@ class AnnealingDecisionPanel(QtWidgets.QWidget):
             f"{'Previous score' if self._language == 'en' else 'Vorheriger Score'}: {step.previous_evaluation.objective_value:.4f}",
             f"{'Candidate score' if self._language == 'en' else 'Kandidaten-Score'}: {step.candidate_evaluation.objective_value:.4f}",
         ]
+        if getattr(snapshot, "sa_evaluation_mode", "") == "online_delta":
+            lines.extend(
+                [
+                    "",
+                    "Online Delta details" if self._language == "en" else "Online-Delta Details",
+                    f"batch_loss_before: {step.batch_loss_before:.6f}",
+                    f"candidate_loss_after: {step.candidate_loss_after:.6f}",
+                    f"trained_after_accept: {step.trained_after_accept}",
+                    f"epoch={step.epoch_index} batch={step.batch_index}",
+                    f"validation_loss_after_update: {step.validation_loss_after_update:.6f}",
+                ]
+            )
         self.text.setPlainText("\n".join(lines))

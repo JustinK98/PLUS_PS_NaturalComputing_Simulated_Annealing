@@ -18,8 +18,12 @@ from configs import (
     DEFAULT_ANNEALING_NEIGHBORHOODS,
     DEFAULT_ANNEALING_OBJECTIVE,
     DEFAULT_ANNEALING_START_TEMPERATURE,
+    DEFAULT_ONLINE_TRAIN_POLICY,
+    DEFAULT_SA_EVALUATION_MODE,
     DatasetConfig,
     GuiExperimentConfig,
+    SUPPORTED_ONLINE_TRAIN_POLICIES,
+    SUPPORTED_SA_EVALUATION_MODES,
     SUPPORTED_BENCHMARKS,
     TrainingConfig,
     default_epochs,
@@ -38,12 +42,28 @@ from services.annealing_session_service import (
     step_once,
 )
 from services.layout_evaluation_service import (
+    InheritedModelCandidate,
     LayoutEvaluationRequest,
     LayoutEvaluationResult,
     build_standard_layout_candidates,
+    evaluate_inherited_models,
     run_layout_evaluation,
+    with_inherited_model_evaluations,
 )
 from services.network_projection_service import build_input_projection
+from services.neuron_analysis_service import build_neuron_analysis_payload
+from services.online_annealing_training_service import (
+    OnlineAnnealingSession,
+    OnlineAnnealingSnapshot,
+    OnlineAnnealingRequest,
+    create_online_session,
+    evaluate_online_start,
+    online_reset,
+    online_run_steps,
+    online_run_to_completion,
+    online_step_once,
+)
+from services.stepper_service import build_step_entries
 from services.training_service import TrainingRunArtifacts, TrainingRunRequest, run_single_training_experiment
 from ui_qt.state import WorkspacePreferences
 from ui_qt.tasking import BackgroundTaskController
@@ -54,9 +74,35 @@ from ui_qt.widgets.annealing_live_panel import AnnealingLivePanel
 from ui_qt.widgets.info_card import InfoCardWidget
 from ui_qt.widgets.layout_editor import LayoutEditorWidget
 from ui_qt.widgets.network_view import NetworkViewWidget
+from ui_qt.widgets.neuron_detail_panel import NeuronDetailPanel
 from ui_qt.widgets.plot_widgets import TrainingPlotWidget
 from ui_qt.widgets.sample_panel import SampleDisplayPayload, SamplePanelWidget
+from ui_qt.widgets.stepper_panel import StepperPanel
 from .base import BaseWorkspace
+
+
+def _run_short_session_steps(session: AnnealingSession, count: int, language: str):
+    snapshot = None
+    for _ in range(max(1, count)):
+        snapshot = step_once(session, language)
+        if snapshot.is_complete:
+            break
+    return snapshot if snapshot is not None else evaluate_start(session, language)
+
+
+def _run_layout_evaluation_with_inherited(
+    request: LayoutEvaluationRequest,
+    inherited_candidates: tuple[InheritedModelCandidate, ...],
+) -> LayoutEvaluationResult:
+    result = run_layout_evaluation(request)
+    if not inherited_candidates:
+        return result
+    inherited_runs = evaluate_inherited_models(
+        request.dataset_config,
+        inherited_candidates,
+        primary_metric=request.primary_metric,
+    )
+    return with_inherited_model_evaluations(result, inherited_runs, request.primary_metric)
 
 
 class ActivationWorkflowWorkspace(BaseWorkspace):
@@ -76,8 +122,8 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         self.analysis_sample: AnalysisSample | None = None
         self.current_model: ModularMLP | None = None
         self.training_artifacts: TrainingRunArtifacts | None = None
-        self.annealing_session: AnnealingSession | None = None
-        self.annealing_snapshot: AnnealingSessionSnapshot | None = None
+        self.annealing_session: AnnealingSession | OnlineAnnealingSession | None = None
+        self.annealing_snapshot: AnnealingSessionSnapshot | OnlineAnnealingSnapshot | None = None
         self.layout_evaluation: LayoutEvaluationResult | None = None
         self.selected_hidden: tuple[int, int] | None = (0, 0)
         self.task_controller = BackgroundTaskController(self)
@@ -157,6 +203,13 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
 
         self.sa_group = QtWidgets.QGroupBox("4. Simulated Annealing")
         sa_layout = QtWidgets.QFormLayout(self.sa_group)
+        self.sa_mode_combo = QtWidgets.QComboBox()
+        self.sa_mode_combo.addItems(SUPPORTED_SA_EVALUATION_MODES)
+        self.sa_mode_combo.setCurrentText(DEFAULT_SA_EVALUATION_MODE)
+        self.sa_mode_combo.currentTextChanged.connect(self._on_sa_mode_changed)
+        self.online_train_policy_combo = QtWidgets.QComboBox()
+        self.online_train_policy_combo.addItems(SUPPORTED_ONLINE_TRAIN_POLICIES)
+        self.online_train_policy_combo.setCurrentText(DEFAULT_ONLINE_TRAIN_POLICY)
         self.candidate_epochs_spin = QtWidgets.QSpinBox()
         self.candidate_epochs_spin.setRange(1, 1000)
         self.candidate_epochs_spin.setValue(DEFAULT_ANNEALING_CANDIDATE_EPOCHS)
@@ -167,20 +220,25 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         self.temperature_spin.setRange(0.001, 100.0)
         self.temperature_spin.setDecimals(3)
         self.temperature_spin.setValue(DEFAULT_ANNEALING_START_TEMPERATURE)
+        sa_layout.addRow("SA Evaluation Mode", self.sa_mode_combo)
+        sa_layout.addRow("Online Train Policy", self.online_train_policy_combo)
         sa_layout.addRow("Candidate Epochs", self.candidate_epochs_spin)
         sa_layout.addRow("Max Steps", self.max_steps_spin)
         sa_layout.addRow("Start Temperature", self.temperature_spin)
         sa_buttons = QtWidgets.QHBoxLayout()
         self.evaluate_start_button = QtWidgets.QPushButton("Start bewerten")
         self.step_once_button = QtWidgets.QPushButton("1 Schritt")
+        self.step_ten_button = QtWidgets.QPushButton("10 Schritte")
         self.run_sa_button = QtWidgets.QPushButton("SA bis Ende")
         self.reset_sa_button = QtWidgets.QPushButton("Reset")
         self.evaluate_start_button.clicked.connect(self._evaluate_start)
         self.step_once_button.clicked.connect(self._step_once)
+        self.step_ten_button.clicked.connect(self._step_ten)
         self.run_sa_button.clicked.connect(self._run_sa_to_completion)
         self.reset_sa_button.clicked.connect(self._reset_sa)
         sa_buttons.addWidget(self.evaluate_start_button)
         sa_buttons.addWidget(self.step_once_button)
+        sa_buttons.addWidget(self.step_ten_button)
         sa_buttons.addWidget(self.run_sa_button)
         sa_buttons.addWidget(self.reset_sa_button)
         sa_layout.addRow(sa_buttons)
@@ -188,7 +246,7 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
 
         self.compare_group = QtWidgets.QGroupBox("5. Finale Layouts vergleichen")
         compare_layout = QtWidgets.QVBoxLayout(self.compare_group)
-        self.compare_button = QtWidgets.QPushButton("Start / Best / Random / Baselines final trainieren")
+        self.compare_button = QtWidgets.QPushButton("Retrained vs Inherited Layouts vergleichen")
         self.compare_button.clicked.connect(self._run_final_layout_comparison)
         compare_layout.addWidget(self.compare_button)
         left_layout.addWidget(self.compare_group)
@@ -213,25 +271,30 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         self.network_view.hiddenNeuronSelected.connect(self._on_hidden_selected)
         self.sample_panel = SamplePanelWidget(self.preferences.language)
         self.training_plot = TrainingPlotWidget()
+        self.neuron_detail_panel = NeuronDetailPanel(self.preferences.language)
+        self.stepper_panel = StepperPanel(self.preferences.language)
         self.annealing_live_panel = AnnealingLivePanel(self.preferences.language)
         self.annealing_history_panel = AnnealingHistoryPanel(self.preferences.language)
         self.annealing_decision_panel = AnnealingDecisionPanel(self.preferences.language)
-        self.final_table = QtWidgets.QTableWidget(0, 7)
+        self.final_table = QtWidgets.QTableWidget(0, 8)
         self.final_table.setHorizontalHeaderLabels(
-            ["Rank", "Layout", "Val Loss", "Val Acc", "Test Loss", "Test Acc", "Seeds"]
+            ["Rank", "Type", "Layout", "Val Loss", "Val Acc", "Test Loss", "Test Acc", "Seeds"]
         )
         self.final_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self.help_text = QtWidgets.QTextBrowser()
         self.help_text.setHtml(self._help_html())
         self.tabs.addTab(self.network_view, "Netz")
         self.tabs.addTab(self.sample_panel, "Sample")
+        self.tabs.addTab(self.neuron_detail_panel, "Neuron Detail")
+        self.tabs.addTab(self.stepper_panel, "Stepper")
         self.tabs.addTab(self.training_plot, "Training")
-        self.tabs.addTab(self.annealing_live_panel, "SA Live")
+        self.tabs.addTab(self.annealing_live_panel, "SA Delta")
         self.tabs.addTab(self.annealing_history_panel, "SA History")
         self.tabs.addTab(self.annealing_decision_panel, "SA Entscheidung")
         self.tabs.addTab(self.final_table, "Finaler Vergleich")
         self.tabs.addTab(self.help_text, "Ablauf")
         right_layout.addWidget(self.tabs, 1)
+        self._update_sa_mode_controls()
 
     def _load_dataset(self) -> None:
         benchmark = self.benchmark_combo.currentText()
@@ -282,11 +345,47 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
                 probabilities=probabilities,
             )
         )
+        self._refresh_neuron_detail()
+        self._refresh_stepper()
         history = self.training_artifacts.training_result.history if self.training_artifacts is not None else None
         self.training_plot.set_history(history)
         self._refresh_cards()
         self._refresh_annealing_panels()
         self._refresh_final_table()
+
+    def _refresh_neuron_detail(self) -> None:
+        if self.dataset is None or self.current_model is None or self.analysis_sample is None:
+            self.neuron_detail_panel.set_placeholder(self.preferences.language)
+            return
+        layer_index, neuron_index = self.selected_hidden or (0, 0)
+        try:
+            payload = build_neuron_analysis_payload(
+                self.current_model,
+                self.dataset,
+                self.analysis_sample,
+                layer_index,
+                neuron_index,
+                self.preferences.language,
+            )
+            self.neuron_detail_panel.set_payload(payload, self.preferences.language)
+        except ValueError:
+            self.neuron_detail_panel.set_placeholder(self.preferences.language)
+
+    def _refresh_stepper(self) -> None:
+        if self.dataset is None or self.current_model is None or self.analysis_sample is None:
+            self.stepper_panel.set_placeholder(self.preferences.language)
+            return
+        trace = self.current_model.trace_sample(
+            self.analysis_sample.scaled_sample.reshape(1, -1),
+            target_index=self.analysis_sample.effective_target_index,
+        )
+        entries = build_step_entries(
+            trace,
+            self.dataset,
+            self.analysis_sample,
+            self.preferences.language,
+        )
+        self.stepper_panel.set_entries(entries)
 
     def _refresh_cards(self) -> None:
         if self.dataset is None:
@@ -329,10 +428,12 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         if self.layout_evaluation is None:
             self.final_table.setRowCount(0)
             return
-        self.final_table.setRowCount(len(self.layout_evaluation.ranking))
-        for row_index, item in enumerate(self.layout_evaluation.ranking):
+        ranking = self.layout_evaluation.combined_ranking or self.layout_evaluation.ranking
+        self.final_table.setRowCount(len(ranking))
+        for row_index, item in enumerate(ranking):
             values = (
                 row_index + 1,
+                item.evaluation_type,
                 item.label,
                 item.mean_metrics["val_loss"],
                 item.mean_metrics["val_accuracy"],
@@ -416,39 +517,74 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         self.statusMessage.emit("Training abgeschlossen.")
         self._refresh_views()
 
-    def _ensure_annealing_session(self) -> AnnealingSession:
+    def _on_sa_mode_changed(self, _mode: str) -> None:
+        self.annealing_session = None
+        self.annealing_snapshot = None
+        self._update_sa_mode_controls()
+        self._refresh_views()
+
+    def _update_sa_mode_controls(self) -> None:
+        is_online = self.sa_mode_combo.currentText() == "online_delta"
+        self.candidate_epochs_spin.setEnabled(not is_online)
+        self.online_train_policy_combo.setEnabled(is_online)
+
+    def _ensure_annealing_session(self) -> AnnealingSession | OnlineAnnealingSession:
         if self.annealing_session is None:
-            request = AnnealingRunRequest(
-                dataset_config=DatasetConfig(name=self.benchmark_combo.currentText(), random_state=self.seed_spin.value()),
-                hidden_sizes=self.layout_editor.hidden_sizes(),
-                layout_spec=self.layout_editor.layout_spec(),
-                objective_config=ObjectiveConfig(
-                    objective_name=DEFAULT_ANNEALING_OBJECTIVE,
-                    candidate_epochs=self.candidate_epochs_spin.value(),
-                    learning_rate=self.lr_spin.value(),
-                    batch_size=self.batch_spin.value(),
-                    weight_scale=self.weight_spin.value(),
-                    random_state=self.seed_spin.value(),
-                    shuffle=True,
-                ),
-                annealing_config=AnnealingConfig(
-                    start_temperature=self.temperature_spin.value(),
-                    cooling_schedule=DEFAULT_ANNEALING_COOLING_SCHEDULE,
-                    cooling_parameter=DEFAULT_ANNEALING_COOLING_PARAMETER,
-                    iterations_per_temperature=DEFAULT_ANNEALING_ITERATIONS_PER_TEMPERATURE,
-                    max_steps=self.max_steps_spin.value(),
-                    min_temperature=DEFAULT_ANNEALING_MIN_TEMPERATURE,
-                    neighborhood_operations=DEFAULT_ANNEALING_NEIGHBORHOODS,
-                ),
-                random_state=self.seed_spin.value(),
+            annealing_config = AnnealingConfig(
+                start_temperature=self.temperature_spin.value(),
+                cooling_schedule=DEFAULT_ANNEALING_COOLING_SCHEDULE,
+                cooling_parameter=DEFAULT_ANNEALING_COOLING_PARAMETER,
+                iterations_per_temperature=DEFAULT_ANNEALING_ITERATIONS_PER_TEMPERATURE,
+                max_steps=self.max_steps_spin.value(),
+                min_temperature=DEFAULT_ANNEALING_MIN_TEMPERATURE,
+                neighborhood_operations=DEFAULT_ANNEALING_NEIGHBORHOODS,
             )
-            self.annealing_session = create_session(request)
+            dataset_config = DatasetConfig(name=self.benchmark_combo.currentText(), random_state=self.seed_spin.value())
+            if self.sa_mode_combo.currentText() == "online_delta":
+                self.annealing_session = create_online_session(
+                    OnlineAnnealingRequest(
+                        dataset_config=dataset_config,
+                        hidden_sizes=self.layout_editor.hidden_sizes(),
+                        layout_spec=self.layout_editor.layout_spec(),
+                        training_config=TrainingConfig(
+                            epochs=self.epochs_spin.value(),
+                            learning_rate=self.lr_spin.value(),
+                            batch_size=self.batch_spin.value(),
+                            random_state=self.seed_spin.value(),
+                            shuffle=True,
+                        ),
+                        annealing_config=annealing_config,
+                        weight_scale=self.weight_spin.value(),
+                        random_state=self.seed_spin.value(),
+                        train_policy=self.online_train_policy_combo.currentText(),
+                    )
+                )
+            else:
+                request = AnnealingRunRequest(
+                    dataset_config=dataset_config,
+                    hidden_sizes=self.layout_editor.hidden_sizes(),
+                    layout_spec=self.layout_editor.layout_spec(),
+                    objective_config=ObjectiveConfig(
+                        objective_name=DEFAULT_ANNEALING_OBJECTIVE,
+                        candidate_epochs=self.candidate_epochs_spin.value(),
+                        learning_rate=self.lr_spin.value(),
+                        batch_size=self.batch_spin.value(),
+                        weight_scale=self.weight_spin.value(),
+                        random_state=self.seed_spin.value(),
+                        shuffle=True,
+                    ),
+                    annealing_config=annealing_config,
+                    random_state=self.seed_spin.value(),
+                )
+                self.annealing_session = create_session(request)
         return self.annealing_session
 
     def _evaluate_start(self) -> None:
+        session = self._ensure_annealing_session()
+        function = evaluate_online_start if self.sa_mode_combo.currentText() == "online_delta" else evaluate_start
         self.task_controller.submit(
-            evaluate_start,
-            self._ensure_annealing_session(),
+            function,
+            session,
             self.preferences.language,
             on_success=self._on_annealing_snapshot,
             on_error=self._on_task_error,
@@ -456,19 +592,46 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         )
 
     def _step_once(self) -> None:
+        session = self._ensure_annealing_session()
+        function = online_step_once if self.sa_mode_combo.currentText() == "online_delta" else step_once
         self.task_controller.submit(
-            step_once,
-            self._ensure_annealing_session(),
+            function,
+            session,
             self.preferences.language,
             on_success=self._on_annealing_snapshot,
             on_error=self._on_task_error,
             status_message="Fuehre SA-Schritt aus...",
         )
 
-    def _run_sa_to_completion(self) -> None:
+    def _step_ten(self) -> None:
+        session = self._ensure_annealing_session()
+        if self.sa_mode_combo.currentText() == "online_delta":
+            self.task_controller.submit(
+                online_run_steps,
+                session,
+                10,
+                self.preferences.language,
+                on_success=self._on_annealing_snapshot,
+                on_error=self._on_task_error,
+                status_message="Fuehre 10 Online-SA-Schritte aus...",
+            )
+            return
         self.task_controller.submit(
-            run_to_completion,
-            self._ensure_annealing_session(),
+            _run_short_session_steps,
+            session,
+            10,
+            self.preferences.language,
+            on_success=self._on_annealing_snapshot,
+            on_error=self._on_task_error,
+            status_message="Fuehre 10 SA-Schritte aus...",
+        )
+
+    def _run_sa_to_completion(self) -> None:
+        session = self._ensure_annealing_session()
+        function = online_run_to_completion if self.sa_mode_combo.currentText() == "online_delta" else run_to_completion
+        self.task_controller.submit(
+            function,
+            session,
             self.preferences.language,
             on_success=self._on_annealing_snapshot,
             on_error=self._on_task_error,
@@ -478,10 +641,13 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
     def _reset_sa(self) -> None:
         if self.annealing_session is None:
             return
-        self.annealing_snapshot = reset(self.annealing_session, self.preferences.language)
+        if self.sa_mode_combo.currentText() == "online_delta":
+            self.annealing_snapshot = online_reset(self.annealing_session, self.preferences.language)  # type: ignore[arg-type]
+        else:
+            self.annealing_snapshot = reset(self.annealing_session, self.preferences.language)  # type: ignore[arg-type]
         self._refresh_views()
 
-    def _on_annealing_snapshot(self, snapshot: AnnealingSessionSnapshot) -> None:
+    def _on_annealing_snapshot(self, snapshot: AnnealingSessionSnapshot | OnlineAnnealingSnapshot) -> None:
         self.annealing_snapshot = snapshot
         if snapshot.best_evaluation is not None:
             self.current_model = snapshot.best_evaluation.trained_model
@@ -489,6 +655,7 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         self._refresh_views()
 
     def _run_final_layout_comparison(self) -> None:
+        inherited_candidates: tuple[InheritedModelCandidate, ...] = ()
         best_layout = (
             self.annealing_snapshot.best_evaluation.layout.to_compact_spec()
             if self.annealing_snapshot is not None and self.annealing_snapshot.best_evaluation is not None
@@ -499,6 +666,24 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
             if self.annealing_snapshot is not None and self.annealing_snapshot.current_evaluation is not None
             else None
         )
+        if (
+            self.annealing_snapshot is not None
+            and getattr(self.annealing_snapshot, "sa_evaluation_mode", "") == "online_delta"
+            and self.annealing_snapshot.best_evaluation is not None
+            and self.annealing_snapshot.current_evaluation is not None
+        ):
+            inherited_candidates = (
+                InheritedModelCandidate(
+                    "best_inherited_model_from_sa",
+                    self.annealing_snapshot.best_evaluation.trained_model.to_state_dict(),
+                    self.seed_spin.value(),
+                ),
+                InheritedModelCandidate(
+                    "end_inherited_model_from_sa",
+                    self.annealing_snapshot.current_evaluation.trained_model.to_state_dict(),
+                    self.seed_spin.value(),
+                ),
+            )
         request = LayoutEvaluationRequest(
             dataset_config=DatasetConfig(name=self.benchmark_combo.currentText(), random_state=self.seed_spin.value()),
             hidden_sizes=self.layout_editor.hidden_sizes(),
@@ -521,11 +706,12 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
             primary_metric="validation_loss",
         )
         self.task_controller.submit(
-            run_layout_evaluation,
+            _run_layout_evaluation_with_inherited,
             request,
+            inherited_candidates,
             on_success=self._on_layout_evaluation_finished,
             on_error=self._on_task_error,
-            status_message="Trainiere finale Layout-Vergleiche...",
+            status_message="Vergleiche retrained und inherited Layouts...",
         )
 
     def _on_layout_evaluation_finished(self, result: LayoutEvaluationResult) -> None:
@@ -540,6 +726,11 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
 
     def retranslate(self) -> None:
         self.sample_panel.set_language(self.preferences.language)
+        self.neuron_detail_panel.set_language(self.preferences.language)
+        self.stepper_panel.set_language(self.preferences.language)
+        self.annealing_live_panel.set_language(self.preferences.language)
+        self.annealing_history_panel.set_language(self.preferences.language)
+        self.annealing_decision_panel.set_language(self.preferences.language)
         self.help_text.setHtml(self._help_html())
         self._refresh_views()
 

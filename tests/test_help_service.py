@@ -17,8 +17,8 @@ class HelpServiceTests(unittest.TestCase):
         self.assertIn("Loss", html)
 
     def test_workspace_help_changes_with_workspace_and_benchmark(self) -> None:
-        html = workspace_help_html("playground", "concentric_circles", "en")
-        self.assertIn("Playground", html)
+        html = workspace_help_html("activation_workflow", "concentric_circles", "en")
+        self.assertIn("Activation Workflow", html)
         self.assertIn("2 numeric inputs", html)
 
 

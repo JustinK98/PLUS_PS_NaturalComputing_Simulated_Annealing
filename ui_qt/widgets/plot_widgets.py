@@ -39,13 +39,37 @@ class TrainingPlotWidget(_BasePlotWidget):
 class AnnealingPlotWidget(_BasePlotWidget):
     def set_state(self, state: Any | None) -> None:
         self.figure.clear()
+        history = list(getattr(state, "history", []) if state is not None else [])
+        if history and hasattr(history[0], "batch_loss_before"):
+            ax_batch = self.figure.add_subplot(311)
+            ax_val = self.figure.add_subplot(312)
+            ax_temp = self.figure.add_subplot(313)
+            steps = [step.step_index for step in history]
+            ax_batch.plot(steps, [step.batch_loss_before for step in history], label="before")
+            ax_batch.plot(steps, [step.candidate_loss_after for step in history], label="candidate")
+            ax_val.plot(steps, [step.validation_loss_after_update for step in history], label="current val")
+            ax_val.plot(steps, [step.best_score_after_step for step in history], label="best val")
+            ax_temp.plot(steps, [step.temperature for step in history], label="temperature", color="#d97706")
+            accepted_steps = [step.step_index for step in history if step.accepted]
+            accepted_temps = [step.temperature for step in history if step.accepted]
+            if accepted_steps:
+                ax_temp.scatter(accepted_steps, accepted_temps, label="accepted", color="#16a34a", s=14)
+            ax_batch.set_title("Online Delta Batch Loss")
+            ax_val.set_title("Validation Loss During Search")
+            ax_temp.set_title("Temperature")
+            ax_batch.legend(loc="best")
+            ax_val.legend(loc="best")
+            ax_temp.legend(loc="best")
+            self.canvas.draw_idle()
+            return
+
         ax_score = self.figure.add_subplot(211)
         ax_temp = self.figure.add_subplot(212)
-        if state is not None and getattr(state, "history", None):
-            steps = [step.step_index for step in state.history]
-            best_scores = [step.best_score_after_step for step in state.history]
-            candidate_scores = [step.candidate_evaluation.comparable_score for step in state.history]
-            temperatures = [step.temperature for step in state.history]
+        if history:
+            steps = [step.step_index for step in history]
+            best_scores = [step.best_score_after_step for step in history]
+            candidate_scores = [step.candidate_evaluation.comparable_score for step in history]
+            temperatures = [step.temperature for step in history]
             ax_score.plot(steps, candidate_scores, label="candidate")
             ax_score.plot(steps, best_scores, label="best")
             ax_score.legend(loc="best")

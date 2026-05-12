@@ -65,7 +65,7 @@ TOPICS: dict[str, dict[str, object]] = {
                 (
                     "How to read it",
                     [
-                        "A benchmark is not a single GUI task. It defines the full playground used for training and simulated annealing evaluation.",
+                        "A benchmark is not a single GUI task. It defines the full environment used for training and simulated annealing evaluation.",
                         "When you switch benchmarks, sensible hidden sizes, samples, and hyperparameters also change.",
                     ],
                 ),
@@ -123,7 +123,7 @@ TOPICS: dict[str, dict[str, object]] = {
                 (
                     "Warum das fuer SA wichtig ist",
                     [
-                        "Im Playground und Builder ist ein Zustand genau so ein Aktivierungs-Layout.",
+                        "Im Activation Workflow und Builder ist ein Zustand genau so ein Aktivierungs-Layout.",
                         "Simulated Annealing sucht also nicht direkt nach besseren Gewichten, sondern nach besseren Aktivierungsbelegungen.",
                     ],
                 ),
@@ -139,7 +139,7 @@ TOPICS: dict[str, dict[str, object]] = {
                 (
                     "Why this matters for SA",
                     [
-                        "In Playground and Builder, one state is exactly such an activation layout.",
+                        "In Activation Workflow and Builder, one state is exactly such an activation layout.",
                         "Simulated annealing therefore searches for better activation assignments, not directly for better weights.",
                     ],
                 ),
@@ -459,15 +459,15 @@ TOPICS: dict[str, dict[str, object]] = {
                 (
                     "Was optimiert wird",
                     [
-                        "validation_loss bevorzugt Layouts, die nach kurzem Training einen niedrigeren Validierungsfehler erzeugen.",
-                        "validation_accuracy bevorzugt Layouts, die nach kurzem Training eine hoehere Validierungsgenauigkeit erreichen.",
+                        "Online-Delta-SA nutzt Loss als Suchsignal: gleicher Mini-Batch, gleiche Gewichte, Layoutaenderung, direkter Loss-Vergleich.",
+                        "Accuracy bleibt eine Reporting-Metrik, ist aber fuer kleine Layoutaenderungen zu grob als Akzeptanzsignal.",
                     ],
                 ),
                 (
                     "Interpretation",
                     [
-                        "Loss reagiert oft feiner auf kleine Verbesserungen, Accuracy ist leichter zu erklaeren.",
-                        "Beide Ziele werden auf dem Validierungssplit gemessen, nicht auf dem sichtbaren Sample allein.",
+                        "Loss reagiert feiner auf kleine Verbesserungen, selbst wenn die vorhergesagte Klasse noch gleich bleibt.",
+                        "Nach akzeptierten Online-Delta-Schritten wird dasselbe Netz weitertrainiert; die Suche ist dadurch ein kontinuierlicher Trainingsprozess.",
                     ],
                 ),
             ],
@@ -475,15 +475,15 @@ TOPICS: dict[str, dict[str, object]] = {
                 (
                     "What is optimized",
                     [
-                        "validation_loss prefers layouts that produce a lower validation error after short candidate training.",
-                        "validation_accuracy prefers layouts that reach higher validation accuracy after short candidate training.",
+                        "Online-delta SA uses loss as the search signal: same mini-batch, same weights, layout change, direct loss comparison.",
+                        "Accuracy remains a reporting metric, but it is too coarse as an acceptance signal for small layout changes.",
                     ],
                 ),
                 (
                     "Interpretation",
                     [
-                        "Loss often reacts more smoothly to small improvements, while accuracy is easier to explain.",
-                        "Both objectives are measured on the validation split, not just on the visible sample.",
+                        "Loss reacts to small improvements even when the predicted class has not changed yet.",
+                        "After accepted online-delta steps, the same network keeps training, so the search is a continuous training process.",
                     ],
                 ),
             ],
@@ -1006,8 +1006,8 @@ def _benchmark_section(benchmark: str, language: str) -> tuple[str, list[str]]:
 
 def workspace_help_html(workspace_id: str, benchmark: str, language: str) -> str:
     lang = _language(language)
-    if workspace_id == "demo":
-        title = "Demo" if lang == "en" else "Demo"
+    if workspace_id == "activation_workflow":
+        title = "Activation Workflow"
         sections = [
             (
                 "Recommended workflow" if lang == "en" else "Empfohlener Ablauf",
@@ -1021,6 +1021,9 @@ def workspace_help_html(workspace_id: str, benchmark: str, language: str) -> str
                     "Train in small chunks and read the sample, plot, stepper, and neuron tracker together."
                     if lang == "en"
                     else "Trainiere in kleinen Schritten und lies Sample, Plot, Stepper und Neuron-Tracker gemeinsam.",
+                    "Run Online Delta SA and then compare start, best, end, random, and homogeneous baselines under identical training."
+                    if lang == "en"
+                    else "Fuehre Online-Delta-SA aus und vergleiche danach Start, Best, End, Random und homogene Baselines unter gleichen Trainingsbedingungen.",
                 ],
             ),
             _benchmark_section(benchmark, language),
@@ -1036,9 +1039,9 @@ def workspace_help_html(workspace_id: str, benchmark: str, language: str) -> str
                     "Neuron tracker and activation curve explain one local hidden computation."
                     if lang == "en"
                     else "Neuron-Tracker und Aktivierungskurve erklaeren eine lokale Hidden-Rechnung.",
-                    "Compare lets you contrast the current model against a stored baseline."
+                    "Final comparison contrasts SA-found layouts against start, random, and homogeneous baselines."
                     if lang == "en"
-                    else "Compare stellt das aktuelle Modell einer gespeicherten Baseline gegenueber.",
+                    else "Der finale Vergleich stellt SA-Layouts gegen Start, Random und homogene Baselines.",
                 ],
             ),
             (
@@ -1053,54 +1056,6 @@ def workspace_help_html(workspace_id: str, benchmark: str, language: str) -> str
                     "Which inputs dominate the selected hidden neuron?"
                     if lang == "en"
                     else "Welche Inputs dominieren das selektierte Hidden-Neuron?",
-                ],
-            ),
-        ]
-        return _wrap_html(title, sections)
-    if workspace_id == "playground":
-        title = "Playground" if lang == "en" else "Playground"
-        sections = [
-            (
-                "Recommended workflow" if lang == "en" else "Empfohlener Ablauf",
-                [
-                    "Set a readable start layout and choose a validation objective."
-                    if lang == "en"
-                    else "Setze ein lesbares Startlayout und waehle ein Validierungsziel.",
-                    "Evaluate start first, then step through SA before running to completion."
-                    if lang == "en"
-                    else "Bewerte zuerst den Startzustand und fuehre SA dann schrittweise aus, bevor du voll durchlaeufst.",
-                    "Read snapshots, decision text, and history together."
-                    if lang == "en"
-                    else "Lies Snapshots, Entscheidungstext und History immer gemeinsam.",
-                ],
-            ),
-            _benchmark_section(benchmark, language),
-            (
-                "How to read SA" if lang == "en" else "Wie du SA liest",
-                [
-                    "State means one concrete activation layout."
-                    if lang == "en"
-                    else "Ein Zustand ist ein konkretes Aktivierungs-Layout.",
-                    "Candidate is the newly proposed neighbor before acceptance or rejection."
-                    if lang == "en"
-                    else "Der Kandidat ist der neu vorgeschlagene Nachbar vor Annahme oder Verwerfung.",
-                    "Best is the strongest layout found so far during the run."
-                    if lang == "en"
-                    else "Best ist das staerkste bisher gefundene Layout.",
-                ],
-            ),
-            (
-                "Useful questions" if lang == "en" else "Nutzbare Beobachtungsfragen",
-                [
-                    "Is the search improving because the layout changed or because candidate training is noisy?"
-                    if lang == "en"
-                    else "Verbessert sich die Suche wegen des Layouts oder nur wegen Trainingsrauschen im Kandidaten?",
-                    "When does the temperature become too restrictive?"
-                    if lang == "en"
-                    else "Ab wann wird die Temperatur zu restriktiv?",
-                    "Does best really outperform start on validation metrics?"
-                    if lang == "en"
-                    else "Schlaegt Best das Startlayout wirklich auf den Validierungsmetriken?",
                 ],
             ),
         ]
@@ -1155,7 +1110,7 @@ def program_handbook_html(language: str) -> str:
         (
             "What this program is" if lang == "en" else "Was dieses Programm ist",
             [
-                "A didactic playground for small neural networks with editable activation layouts."
+                "A didactic environment for small neural networks with editable activation layouts."
                 if lang == "en"
                 else "Eine didaktische Experimentierplattform fuer kleine neuronale Netze mit editierbaren Aktivierungs-Layouts.",
                 "It connects benchmarks, activation functions, training, and simulated annealing in one coherent interface."
@@ -1169,12 +1124,6 @@ def program_handbook_html(language: str) -> str:
                 "Activation Workflow connects layout choice, manual training, simulated annealing, and final layout comparison."
                 if lang == "en"
                 else "Activation Workflow verbindet Layoutwahl, manuelles Training, Simulated Annealing und finalen Layout-Vergleich.",
-                "Demo explains one concrete model, one sample, and how training changes behavior."
-                if lang == "en"
-                else "Demo erklaert ein konkretes Modell, ein konkretes Sample und wie Training das Verhalten veraendert.",
-                "Playground explains simulated annealing over activation layouts step by step."
-                if lang == "en"
-                else "Playground erklaert Simulated Annealing ueber Aktivierungs-Layouts Schritt fuer Schritt.",
                 "Experiment Builder is for reproducible multi-seed experiments and later analysis."
                 if lang == "en"
                 else "Experiment Builder ist fuer reproduzierbare Multi-Seed-Experimente und spaetere Analyse gedacht.",
@@ -1186,9 +1135,9 @@ def program_handbook_html(language: str) -> str:
                 "Weights learn during training, but the activation layout defines how hidden neurons transform signals."
                 if lang == "en"
                 else "Gewichte werden im Training gelernt, aber das Aktivierungs-Layout bestimmt, wie Hidden-Neuronen Signale transformieren.",
-                "Simulated annealing searches over these layouts and briefly retrains each candidate before scoring it."
+                "Simulated annealing searches over these layouts. The default Online Delta mode measures an immediate mini-batch loss change before training accepted states further."
                 if lang == "en"
-                else "Simulated Annealing sucht ueber diese Layouts und trainiert jeden Kandidaten kurz an, bevor er bewertet wird.",
+                else "Simulated Annealing sucht ueber diese Layouts. Der Standardmodus Online Delta misst zuerst die direkte Mini-Batch-Loss-Aenderung und trainiert akzeptierte Zustaende danach weiter.",
             ],
         ),
         (
@@ -1234,9 +1183,9 @@ def program_handbook_html(language: str) -> str:
                 "Use test_activation to read local neuron computations without distraction."
                 if lang == "en"
                 else "Nutze test_activation, um lokale Neuron-Rechnungen ohne Ablenkung zu lesen.",
-                "Use Playground to study why SA accepts some worse candidates early in the run."
+                "Use the SA Delta and SA History tabs to study why SA accepts some worse candidates early in the run."
                 if lang == "en"
-                else "Nutze Playground, um zu verstehen, warum SA frueh im Lauf auch schlechtere Kandidaten akzeptiert.",
+                else "Nutze SA Delta und SA History, um zu verstehen, warum SA frueh im Lauf auch schlechtere Kandidaten akzeptiert.",
             ],
         ),
     ]
