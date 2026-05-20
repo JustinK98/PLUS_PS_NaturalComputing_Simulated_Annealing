@@ -171,7 +171,8 @@ Important:
 
 - training changes weights and biases
 - training does not change the activation layout
-- in simulated annealing, each candidate layout is trained from scratch for a short budget
+- in the default online-delta simulated annealing mode, a candidate layout is evaluated before any candidate training happens
+- the older `short_retrain` mode can still train each candidate for a short budget, but this is now a comparison/legacy mode
 
 ## 5. Simulated Annealing in This Project
 
@@ -295,6 +296,7 @@ Candidate Epochs are only used by the legacy `short_retrain` SA mode.
 
 - too few: candidate score can be noisy
 - more: fairer comparison, but slower search
+- not used by the default `online_delta` mode
 
 ### Start Temperature
 
@@ -365,7 +367,8 @@ This allows:
 - use validation for model selection
 - use test only for final reporting
 - keep the first experiments small and readable
-- if simulated annealing feels random, increase `candidate_epochs` before changing everything else
+- for online-delta SA, tune `max_steps`, `batch_size`, `online_train_policy`, temperature/cooling, and neighborhood operations before changing everything else
+- only tune `candidate_epochs` when you intentionally run the legacy `short_retrain` mode
 
 ## 11. Guided Experiment Recipes
 

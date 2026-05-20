@@ -134,11 +134,14 @@ Die nächste sinnvolle Experimentrunde sollte nicht breit alles erhöhen, sonder
 
 - zuerst `concentric_circles` und `iris`;
 - dann erst `crossing_spirals`;
-- Suchparameter:
-  - `candidate_epochs`: 10, 20, 40
+- Online-Delta-Suchparameter:
   - `max_steps`: 20, 50, 100
+  - `batch_size`: 16, 32, 64
+  - `online_train_policy`: `accepted`, `improved_only`, `none`
   - `start_temperature`: 0.5, 1.0, 1.5, 2.0
   - `cooling_parameter`: 0.85, 0.9, 0.95
   - Neighborhoods: `set_neuron`, `fill_layer`, `set_neuron+swap_neurons`, `all_operations`
+
+`candidate_epochs` gehoert nur noch in eine separate `short_retrain`-Ablation und ist kein Tuningparameter fuer den Online-Delta-Standardpfad.
 
 Testdaten bleiben für die finale Bewertung reserviert. Ranking und Tuning erfolgen über Validation-Metriken.

@@ -160,6 +160,9 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         self.hidden_sizes_edit.editingFinished.connect(self._on_hidden_sizes_changed)
         setup_layout.addRow("Benchmark", self.benchmark_combo)
         setup_layout.addRow("Hidden Sizes", self.hidden_sizes_edit)
+        self.reset_workflow_button = QtWidgets.QPushButton("Workflow zurücksetzen")
+        self.reset_workflow_button.clicked.connect(self._reset_workflow)
+        setup_layout.addRow(self.reset_workflow_button)
         left_layout.addWidget(self.setup_group)
 
         self.layout_group = QtWidgets.QGroupBox("2. Aktivierungs-Layout")
@@ -174,22 +177,27 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         self.epochs_spin = QtWidgets.QSpinBox()
         self.epochs_spin.setRange(1, 5000)
         self.epochs_spin.setValue(self.config.epochs)
+        self.epochs_spin.valueChanged.connect(lambda _value: self._on_training_config_changed(reload_dataset=False))
         self.lr_spin = QtWidgets.QDoubleSpinBox()
         self.lr_spin.setRange(0.0001, 10.0)
         self.lr_spin.setDecimals(4)
         self.lr_spin.setSingleStep(0.003)
         self.lr_spin.setValue(self.config.learning_rate)
+        self.lr_spin.valueChanged.connect(lambda _value: self._on_training_config_changed(reload_dataset=False))
         self.batch_spin = QtWidgets.QSpinBox()
         self.batch_spin.setRange(1, 4096)
         self.batch_spin.setValue(self.config.batch_size)
+        self.batch_spin.valueChanged.connect(lambda _value: self._on_training_config_changed(reload_dataset=False))
         self.weight_spin = QtWidgets.QDoubleSpinBox()
         self.weight_spin.setRange(0.0001, 10.0)
         self.weight_spin.setDecimals(4)
         self.weight_spin.setSingleStep(0.01)
         self.weight_spin.setValue(self.config.weight_scale)
+        self.weight_spin.valueChanged.connect(lambda _value: self._on_training_config_changed(reload_dataset=False))
         self.seed_spin = QtWidgets.QSpinBox()
         self.seed_spin.setRange(0, 1_000_000)
         self.seed_spin.setValue(self.config.random_state)
+        self.seed_spin.valueChanged.connect(lambda _value: self._on_training_config_changed(reload_dataset=True))
         training_layout.addRow("Epochs", self.epochs_spin)
         training_layout.addRow("Learning Rate", self.lr_spin)
         training_layout.addRow("Batch Size", self.batch_spin)
@@ -210,19 +218,25 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         self.online_train_policy_combo = QtWidgets.QComboBox()
         self.online_train_policy_combo.addItems(SUPPORTED_ONLINE_TRAIN_POLICIES)
         self.online_train_policy_combo.setCurrentText(DEFAULT_ONLINE_TRAIN_POLICY)
+        self.online_train_policy_combo.currentTextChanged.connect(lambda _value: self._on_sa_config_changed())
         self.candidate_epochs_spin = QtWidgets.QSpinBox()
         self.candidate_epochs_spin.setRange(1, 1000)
         self.candidate_epochs_spin.setValue(DEFAULT_ANNEALING_CANDIDATE_EPOCHS)
+        self.candidate_epochs_spin.valueChanged.connect(lambda _value: self._on_sa_config_changed())
         self.max_steps_spin = QtWidgets.QSpinBox()
         self.max_steps_spin.setRange(1, 10000)
         self.max_steps_spin.setValue(DEFAULT_ANNEALING_MAX_STEPS)
+        self.max_steps_spin.valueChanged.connect(lambda _value: self._on_sa_config_changed())
         self.temperature_spin = QtWidgets.QDoubleSpinBox()
         self.temperature_spin.setRange(0.001, 100.0)
         self.temperature_spin.setDecimals(3)
         self.temperature_spin.setValue(DEFAULT_ANNEALING_START_TEMPERATURE)
+        self.temperature_spin.valueChanged.connect(lambda _value: self._on_sa_config_changed())
         sa_layout.addRow("SA Evaluation Mode", self.sa_mode_combo)
         sa_layout.addRow("Online Train Policy", self.online_train_policy_combo)
-        sa_layout.addRow("Candidate Epochs", self.candidate_epochs_spin)
+        self.online_train_policy_label = sa_layout.labelForField(self.online_train_policy_combo)
+        sa_layout.addRow("Candidate Epochs (short-retrain only)", self.candidate_epochs_spin)
+        self.candidate_epochs_label = sa_layout.labelForField(self.candidate_epochs_spin)
         sa_layout.addRow("Max Steps", self.max_steps_spin)
         sa_layout.addRow("Start Temperature", self.temperature_spin)
         sa_buttons = QtWidgets.QHBoxLayout()
@@ -305,9 +319,11 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
             0,
             language=self.preferences.language,
         )
+        self.training_artifacts = None
         self.annealing_session = None
         self.annealing_snapshot = None
         self.layout_evaluation = None
+        self.selected_hidden = (0, 0)
 
     def _rebuild_preview_model(self) -> None:
         if self.dataset is None:
@@ -477,6 +493,33 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
         self._rebuild_preview_model()
         self._refresh_views()
 
+    def _on_training_config_changed(self, *, reload_dataset: bool) -> None:
+        self.training_artifacts = None
+        self.layout_evaluation = None
+        self.annealing_session = None
+        self.annealing_snapshot = None
+        if reload_dataset:
+            self._load_dataset()
+        self._rebuild_preview_model()
+        self._refresh_views()
+
+    def _on_sa_config_changed(self) -> None:
+        self.layout_evaluation = None
+        self.annealing_session = None
+        self.annealing_snapshot = None
+        self._refresh_views()
+
+    def _reset_workflow(self) -> None:
+        self.training_artifacts = None
+        self.layout_evaluation = None
+        self.annealing_session = None
+        self.annealing_snapshot = None
+        self.selected_hidden = (0, 0)
+        self._load_dataset()
+        self._rebuild_preview_model()
+        self._refresh_views()
+        self.statusMessage.emit("Workflow zurückgesetzt.")
+
     def _on_hidden_selected(self, layer_index: int, neuron_index: int) -> None:
         self.selected_hidden = (layer_index, neuron_index)
         self._refresh_views()
@@ -525,8 +568,13 @@ class ActivationWorkflowWorkspace(BaseWorkspace):
 
     def _update_sa_mode_controls(self) -> None:
         is_online = self.sa_mode_combo.currentText() == "online_delta"
-        self.candidate_epochs_spin.setEnabled(not is_online)
+        self.candidate_epochs_spin.setVisible(not is_online)
+        if self.candidate_epochs_label is not None:
+            self.candidate_epochs_label.setVisible(not is_online)
         self.online_train_policy_combo.setEnabled(is_online)
+        self.online_train_policy_combo.setVisible(is_online)
+        if self.online_train_policy_label is not None:
+            self.online_train_policy_label.setVisible(is_online)
 
     def _ensure_annealing_session(self) -> AnnealingSession | OnlineAnnealingSession:
         if self.annealing_session is None:

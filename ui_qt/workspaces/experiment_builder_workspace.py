@@ -166,10 +166,14 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
         self.min_temp_spin = QtWidgets.QDoubleSpinBox()
         self.min_temp_spin.setRange(0.0, 10.0)
         self.min_temp_spin.setValue(definition.min_temperature)
-        sa_layout.addRow(self.make_help_label("SA Evaluation Mode", "objective"), self.sa_mode_combo)
-        sa_layout.addRow(self.make_help_label("Online Train Policy", "objective"), self.online_train_policy_combo)
-        sa_layout.addRow(self.make_help_label("Objective", "objective"), self.objective_combo)
-        sa_layout.addRow(self.make_help_label("Candidate Epochs", "objective"), self.candidate_epochs_spin)
+        self.sa_mode_label = self.make_help_label("SA Evaluation Mode", "objective")
+        self.online_train_policy_label = self.make_help_label("Online Train Policy", "objective")
+        self.objective_label = self.make_help_label("Objective", "objective")
+        self.candidate_epochs_label = self.make_help_label("Candidate Epochs (short-retrain only)", "objective")
+        sa_layout.addRow(self.sa_mode_label, self.sa_mode_combo)
+        sa_layout.addRow(self.online_train_policy_label, self.online_train_policy_combo)
+        sa_layout.addRow(self.objective_label, self.objective_combo)
+        sa_layout.addRow(self.candidate_epochs_label, self.candidate_epochs_spin)
         sa_layout.addRow(self.make_help_label("Start Temperature", "annealing_config"), self.start_temp_spin)
         sa_layout.addRow(self.make_help_label("Cooling", "annealing_config"), self.cooling_schedule_combo)
         sa_layout.addRow(self.make_help_label("Cooling Parameter", "annealing_config"), self.cooling_param_spin)
@@ -188,6 +192,7 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
         search_layout.addRow(self.make_help_label("Search Type", "search_space"), self.search_type_combo)
         search_layout.addRow(self.make_help_label("Random Samples", "search_space"), self.random_samples_spin)
         self.search_rows: dict[str, tuple[QtWidgets.QComboBox, QtWidgets.QLineEdit]] = {}
+        self.search_row_widgets: dict[str, tuple[QtWidgets.QWidget, QtWidgets.QWidget]] = {}
         for parameter_name, placeholder in {
             "learning_rate": "0.001,0.01,0.1",
             "batch_size": "8,16,32",
@@ -204,8 +209,10 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
             value_edit.setPlaceholderText(placeholder)
             row_layout.addWidget(mode_combo)
             row_layout.addWidget(value_edit)
-            search_layout.addRow(self.make_help_label(parameter_name, "search_space"), row_widget)
+            label_widget = self.make_help_label(parameter_name, "search_space")
+            search_layout.addRow(label_widget, row_widget)
             self.search_rows[parameter_name] = (mode_combo, value_edit)
+            self.search_row_widgets[parameter_name] = (label_widget, row_widget)
         left_layout.addWidget(self.search_group)
 
         self.storage_group = QtWidgets.QGroupBox()
@@ -329,13 +336,25 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
         self._update_sa_mode_visibility()
 
     def _update_sa_mode_visibility(self) -> None:
-        is_online = self.run_mode_combo.currentText() == "simulated_annealing" and self.sa_mode_combo.currentText() == "online_delta"
+        is_sa = self.run_mode_combo.currentText() == "simulated_annealing"
+        is_online = is_sa and self.sa_mode_combo.currentText() == "online_delta"
+        is_short_retrain = is_sa and self.sa_mode_combo.currentText() == "short_retrain"
         if is_online:
             self.primary_metric_combo.setCurrentText("validation_loss")
-        self.candidate_epochs_spin.setEnabled(not is_online)
-        self.objective_combo.setEnabled(not is_online)
-        self.online_train_policy_combo.setEnabled(is_online)
+        self.candidate_epochs_spin.setVisible(is_short_retrain)
+        self.candidate_epochs_label.setVisible(is_short_retrain)
+        self.objective_combo.setVisible(is_short_retrain)
+        self.objective_label.setVisible(is_short_retrain)
+        self.online_train_policy_combo.setVisible(is_online)
+        self.online_train_policy_label.setVisible(is_online)
         self.primary_metric_combo.setEnabled(not is_online)
+        for parameter_name, visible in {
+            "candidate_epochs": is_short_retrain,
+            "start_temperature": is_sa,
+        }.items():
+            label_widget, row_widget = self.search_row_widgets[parameter_name]
+            label_widget.setVisible(visible)
+            row_widget.setVisible(visible)
 
     def _build_search_space(self) -> SearchSpaceDefinition:
         search_type = self.search_type_combo.currentText()
