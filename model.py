@@ -176,7 +176,12 @@ class ModularMLP:
         rng = np.random.default_rng(random_state)
         layer_sizes = (input_size, *self.hidden_sizes, output_size)
         self.weights: list[Array] = [
-            rng.normal(0.0, weight_scale, size=(layer_sizes[index], layer_sizes[index + 1]))
+            _xavier_uniform(
+                rng,
+                fan_in=layer_sizes[index],
+                fan_out=layer_sizes[index + 1],
+                scale=weight_scale,
+            )
             for index in range(len(layer_sizes) - 1)
         ]
         self.biases: list[Array] = [
@@ -590,6 +595,21 @@ def softmax(logits: Array) -> Array:
     shifted = logits - np.max(logits, axis=1, keepdims=True)
     exponentials = np.exp(shifted)
     return exponentials / np.sum(exponentials, axis=1, keepdims=True)
+
+
+def _xavier_uniform(
+    rng: np.random.Generator,
+    *,
+    fan_in: int,
+    fan_out: int,
+    scale: float,
+) -> Array:
+    """Initialisiert Gewichte mit Xavier/Glorot uniform."""
+
+    if scale <= 0.0:
+        raise ValueError("weight_scale muss positiv sein.")
+    limit = scale * np.sqrt(6.0 / float(fan_in + fan_out))
+    return rng.uniform(-limit, limit, size=(fan_in, fan_out))
 
 
 def cross_entropy_loss(probabilities: Array, y_true: Array) -> float:

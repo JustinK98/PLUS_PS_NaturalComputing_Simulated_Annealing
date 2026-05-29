@@ -30,6 +30,18 @@ class BenchmarkSpec:
 
 
 OFFICIAL_BENCHMARK_SPECS: dict[str, BenchmarkSpec] = {
+    "two_moons": BenchmarkSpec(
+        name="two_moons",
+        train_csv=BENCHMARK_DATA_DIR / "two_moons_train.csv",
+        test_csv=BENCHMARK_DATA_DIR / "two_moons_test.csv",
+        feature_columns=("x", "y"),
+        label_column="label",
+        target_names=("moon_0", "moon_1"),
+        hidden_sizes=(8,),
+        epochs=100,
+        model_output_size=1,
+        task_type="binary",
+    ),
     "concentric_circles": BenchmarkSpec(
         name="concentric_circles",
         train_csv=BENCHMARK_DATA_DIR / "concentric_circles_train.csv",
@@ -37,27 +49,10 @@ OFFICIAL_BENCHMARK_SPECS: dict[str, BenchmarkSpec] = {
         feature_columns=("x", "y"),
         label_column="label",
         target_names=("outer_circle", "inner_circle"),
-        hidden_sizes=(8,),
-        epochs=100,
+        hidden_sizes=(8, 8),
+        epochs=150,
         model_output_size=1,
         task_type="binary",
-    ),
-    "iris": BenchmarkSpec(
-        name="iris",
-        train_csv=BENCHMARK_DATA_DIR / "iris_train.csv",
-        test_csv=BENCHMARK_DATA_DIR / "iris_test.csv",
-        feature_columns=(
-            "sepal length (cm)",
-            "sepal width (cm)",
-            "petal length (cm)",
-            "petal width (cm)",
-        ),
-        label_column="label",
-        target_names=("setosa", "versicolor", "virginica"),
-        hidden_sizes=(8,),
-        epochs=150,
-        model_output_size=3,
-        task_type="multiclass",
     ),
     "crossing_spirals": BenchmarkSpec(
         name="crossing_spirals",

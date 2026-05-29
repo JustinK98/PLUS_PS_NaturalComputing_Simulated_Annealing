@@ -33,7 +33,23 @@ python main.py gui --mode activation_workflow --detail-level expert --language e
 Single training run:
 
 ```bash
-python main.py run --benchmark concentric_circles --hidden-sizes 8 --layout "relu"
+python main.py run --benchmark two_moons --hidden-sizes 8 --layout "relu"
+```
+
+Official suite runs:
+
+```bash
+python main.py experiment suite --exp online-delta --benchmark two_moons
+python main.py experiment suite --exp random-baseline --benchmark two_moons
+python main.py experiment suite --exp all-baseline --benchmark two_moons
+python main.py experiment suite --exp swap-ablation --benchmark two_moons
+python main.py experiment suite --exp online-delta --benchmark two_moons --learning-rate 2
+```
+
+Aggregate Online-Delta progress and activation statistics:
+
+```bash
+python main.py experiment report-online-delta --path outputs/experiment_suites/<run-dir>
 ```
 
 Export an experiment definition:
@@ -71,7 +87,7 @@ python main.py --show-layout-help
 - small MLPs with 1 to 4 hidden layers
 - activation functions per layer or per neuron
 - supported activations: `relu`, `gelu`, `sigmoid`, `tanh`, `swish`, `identity`
-- official CSV benchmarks: `concentric_circles`, `iris`, `crossing_spirals`
+- official binary CSV benchmarks: `two_moons`, `concentric_circles`, `crossing_spirals`
 - train / validation / test evaluation
 - sample-level inspection, neuron tracker, activation curve, and stepper
 - simulated annealing over activation layouts
@@ -103,8 +119,8 @@ Use `Experiment Builder` for reproducible experiments:
 
 ## Official Benchmarks
 
-- `concentric_circles`: 2 numeric inputs, 2 classes, topology `2-8-1`, 100 epochs
-- `iris`: 4 numeric inputs, 3 classes, topology `4-8-3`, 150 epochs
+- `two_moons`: 2 numeric inputs, 2 classes, topology `2-8-1`, 100 epochs
+- `concentric_circles`: 2 numeric inputs, 2 classes, topology `2-8-8-1`, 150 epochs
 - `crossing_spirals`: 6 numeric inputs, 2 classes, topology `6-16-16-1`, 250 epochs
 
 The official CSV files are vendored under `data/benchmarks/basics_group/`; `SOURCE.md` records the upstream repository and commit SHA.
@@ -122,5 +138,7 @@ The official CSV files are vendored under `data/benchmarks/basics_group/`; `SOUR
 ## Documentation
 
 - [Handbook](docs/HANDBOOK.md): user-facing learning guide, plot interpretation, recipes
+- [Experiments](docs/EXPERIMENTS.md): terminal benchmark suites, presets, artifacts, and smoke commands
+- [Experiment Workflow Report](docs/EXPERIMENT_WORKFLOW_REPORT.md): metric definitions, fixed workflow, Online-Delta-SA method, and current result interpretation
 - [Architecture](docs/ARCHITECTURE.md): current Qt/service/CLI architecture
-- [Results Report](docs/RESULTS_REPORT.md): current benchmark, grid, SA, and neighborhood findings
+- [Results Report](docs/RESULTS_REPORT.md): archived legacy report path; regenerate after the new suite baseline

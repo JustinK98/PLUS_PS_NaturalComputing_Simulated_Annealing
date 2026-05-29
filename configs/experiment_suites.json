@@ -1,0 +1,37 @@
+{
+  "defaults": {
+    "benchmark": "two_moons",
+    "run_count": 10,
+    "primary_metric": "validation_loss",
+    "output_root": "outputs/experiment_suites",
+    "annealing": {
+      "start_temperature": 0.03,
+      "cooling_parameter": 0.95,
+      "iterations_per_temperature": 5,
+      "max_steps": 120,
+      "min_temperature": 0.001
+    }
+  },
+  "learning_rate_presets": {
+    "1": [0.01],
+    "2": [0.003, 0.01, 0.03],
+    "3": [0.001, 0.003, 0.01, 0.03, 0.1]
+  },
+  "experiments": {
+    "all-baseline": {
+      "id": "E1_all_single_af",
+      "layouts": ["relu", "gelu", "sigmoid", "tanh", "swish", "identity"]
+    },
+    "random-baseline": {
+      "id": "E2_random_mixed"
+    },
+    "online-delta": {
+      "id": "E3_online_delta_from_random",
+      "neighborhood_operations": ["set_neuron"]
+    },
+    "swap-ablation": {
+      "id": "E4_online_delta_swap_ablation",
+      "neighborhood_operations": ["set_neuron", "swap_neurons"]
+    }
+  }
+}

@@ -44,14 +44,14 @@ SUPPORTED_ONLINE_TRAIN_POLICIES = ("accepted", "improved_only", "none")
 # Standardwerte fuer einen schnellen Einstieg.
 # Wenn das Projekt einfach mit `python main.py` gestartet wird, werden genau
 # diese Defaults benutzt, sofern der interaktive Assistent nichts anderes setzt.
-DEFAULT_BENCHMARK = "concentric_circles"
+DEFAULT_BENCHMARK = "two_moons"
 DEFAULT_LAYOUT = "relu"
 DEFAULT_RANDOM_SEED = 42
 DEFAULT_GUI_APP_MODE = "activation_workflow"
 DEFAULT_EPOCHS = 120
-DEFAULT_LEARNING_RATE = 0.03
+DEFAULT_LEARNING_RATE = 0.01
 DEFAULT_BATCH_SIZE = 32
-DEFAULT_WEIGHT_SCALE = 0.05
+DEFAULT_WEIGHT_SCALE = 1.0
 DEFAULT_VALIDATION_SIZE = 0.2
 DEFAULT_TEST_SIZE = 0.2
 DEFAULT_NEIGHBOR_PREVIEW = 6
@@ -59,13 +59,13 @@ DEFAULT_ANNEALING_OBJECTIVE = "validation_loss"
 DEFAULT_SA_EVALUATION_MODE = "online_delta"
 DEFAULT_ONLINE_TRAIN_POLICY = "accepted"
 DEFAULT_ANNEALING_CANDIDATE_EPOCHS = 20
-DEFAULT_ANNEALING_START_TEMPERATURE = 1.5
+DEFAULT_ANNEALING_START_TEMPERATURE = 0.03
 DEFAULT_ANNEALING_COOLING_SCHEDULE = "geometric"
-DEFAULT_ANNEALING_COOLING_PARAMETER = 0.92
+DEFAULT_ANNEALING_COOLING_PARAMETER = 0.95
 DEFAULT_ANNEALING_ITERATIONS_PER_TEMPERATURE = 5
-DEFAULT_ANNEALING_MAX_STEPS = 40
-DEFAULT_ANNEALING_MIN_TEMPERATURE = 0.02
-DEFAULT_ANNEALING_NEIGHBORHOODS = ("set_neuron", "fill_layer", "swap_neurons")
+DEFAULT_ANNEALING_MAX_STEPS = 120
+DEFAULT_ANNEALING_MIN_TEMPERATURE = 0.001
+DEFAULT_ANNEALING_NEIGHBORHOODS = ("set_neuron",)
 DEFAULT_EXPERIMENT_OUTPUT_SUBDIR = "experiments"
 DEFAULT_EXPERIMENT_SEARCH_TYPE = "none"
 DEFAULT_EXPERIMENT_RANDOM_SEARCH_SAMPLES = 8
@@ -125,6 +125,8 @@ NEIGHBOR_OPERATION_EXAMPLES = """Neighbor-Operationen:
 Hinweis:
   Layer-Indizes sind L1, L2, L3, ...
   Neuronen-Indizes sind absichtlich nullbasiert, damit sie direkt zu Python passen.
+  Der offizielle Online-Delta-Hauptversuch nutzt set_neuron only; swap_neurons
+  ist nur Ablation, fill_layer nicht Teil des Hauptpfads.
 """
 
 

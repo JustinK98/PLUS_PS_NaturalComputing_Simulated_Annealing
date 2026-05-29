@@ -24,7 +24,7 @@ class ExperimentServiceTests(unittest.TestCase):
             save_experiment_template(output_path)
             definition = load_experiment_definition(output_path)
             self.assertIsInstance(definition, ExperimentDefinition)
-            self.assertEqual(definition.experiment_id, "example_concentric_circles_manual")
+            self.assertEqual(definition.experiment_id, "example_two_moons_manual")
 
     def test_definition_json_roundtrip(self) -> None:
         definition = default_experiment_definition()
@@ -51,7 +51,7 @@ class ExperimentServiceTests(unittest.TestCase):
             default_experiment_definition(),
             experiment_id="concentric_manual_smoke",
             benchmark="concentric_circles",
-            hidden_sizes=(8,),
+            hidden_sizes=(8, 8),
             layout_spec="relu",
             seeds=(11,),
             save_json=False,
@@ -68,7 +68,7 @@ class ExperimentServiceTests(unittest.TestCase):
             default_experiment_definition(),
             experiment_id="concentric_online_sa_smoke",
             benchmark="concentric_circles",
-            hidden_sizes=(8,),
+            hidden_sizes=(8, 8),
             layout_spec="relu",
             run_mode="simulated_annealing",
             seeds=(13,),
@@ -98,7 +98,7 @@ class ExperimentServiceTests(unittest.TestCase):
             default_experiment_definition(),
             experiment_id="concentric_short_retrain_sa_smoke",
             benchmark="concentric_circles",
-            hidden_sizes=(8,),
+            hidden_sizes=(8, 8),
             layout_spec="relu",
             run_mode="simulated_annealing",
             sa_evaluation_mode="short_retrain",

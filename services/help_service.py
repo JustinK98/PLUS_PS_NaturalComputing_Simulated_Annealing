@@ -43,7 +43,7 @@ TOPICS: dict[str, dict[str, object]] = {
                     "Was du hier festlegst",
                     [
                         "Der Benchmark bestimmt Datensatz, Eingabedarstellung, Klassenzahl und Schwierigkeit.",
-                        "Offiziell genutzt werden concentric_circles, iris und crossing_spirals als CSV-Benchmarks des Basics-Teams.",
+                        "Offiziell genutzt werden two_moons, concentric_circles und crossing_spirals als binaere CSV-Benchmarks des Basics-Teams.",
                     ],
                 ),
                 (
@@ -59,7 +59,7 @@ TOPICS: dict[str, dict[str, object]] = {
                     "What this controls",
                     [
                         "The benchmark determines the dataset, input representation, number of classes, and overall difficulty.",
-                        "The official suite uses concentric_circles, iris, and crossing_spirals from the Basics team's CSV files.",
+                        "The official suite uses two_moons, concentric_circles, and crossing_spirals as binary CSV benchmarks from the Basics team.",
                     ],
                 ),
                 (
@@ -538,7 +538,8 @@ TOPICS: dict[str, dict[str, object]] = {
                     "Was das ist",
                     [
                         "Neighborhood Operations bestimmen, welche kleinen Layout-Aenderungen Simulated Annealing vorschlagen darf.",
-                        "set_neuron aendert ein einzelnes Neuron, fill_layer setzt einen ganzen Layer, swap_neurons vertauscht Belegungen.",
+                        "Der empfohlene Online-Delta-Hauptpfad nutzt set_neuron: genau ein Hidden-Neuron wird auf eine andere AF gesetzt.",
+                        "swap_neurons ist nur eine Ablation; fill_layer ist fuer die offiziellen kleinen Netze nicht Teil des Hauptversuchs.",
                     ],
                 ),
                 (
@@ -554,7 +555,8 @@ TOPICS: dict[str, dict[str, object]] = {
                     "What this is",
                     [
                         "Neighborhood operations define which small layout changes simulated annealing is allowed to propose.",
-                        "set_neuron changes one neuron, fill_layer rewrites a whole layer, and swap_neurons swaps assignments.",
+                        "The recommended Online-Delta main path uses set_neuron: exactly one hidden neuron changes to another AF.",
+                        "swap_neurons is only an ablation; fill_layer is not part of the official small-network main experiment.",
                     ],
                 ),
                 (
@@ -964,13 +966,13 @@ def _benchmark_section(benchmark: str, language: str) -> tuple[str, list[str]]:
     section_title = "Aktueller Benchmark" if lang == "de" else "Current Benchmark"
     benchmark_lines = {
         "de": {
-            "concentric_circles": [
+            "two_moons": [
                 "2 numerische Eingaben, 2 Klassen, offizieller Easy-Benchmark.",
-                "Gut fuer erste SA-Vergleiche, weil die Topologie klein und die Entscheidung geometrisch anschaulich ist.",
+                "Gut fuer schnelle Smokes und erste Baseline-Vergleiche mit Topologie 2-8-1.",
             ],
-            "iris": [
-                "4 numerische Eingaben, 3 Klassen, offizieller Medium-Benchmark.",
-                "Ein kompakter Mehrklassen-Benchmark fuer erste Vergleiche zwischen homogenen und gemischten Layouts.",
+            "concentric_circles": [
+                "2 numerische Eingaben, 2 Klassen, offizieller Medium-Benchmark.",
+                "Nutzt zwei Hidden-Layer und ist der naechste Schritt nach two_moons.",
             ],
             "crossing_spirals": [
                 "6 numerische Eingaben, 2 Klassen, offizieller Hard-Benchmark.",
@@ -982,13 +984,13 @@ def _benchmark_section(benchmark: str, language: str) -> tuple[str, list[str]]:
             ],
         },
         "en": {
-            "concentric_circles": [
+            "two_moons": [
                 "2 numeric inputs, 2 classes, official easy benchmark.",
-                "Useful for first SA comparisons because the topology is small and the decision boundary is geometrically intuitive.",
+                "Good for fast smokes and first baseline comparisons with topology 2-8-1.",
             ],
-            "iris": [
-                "4 numeric inputs, 3 classes, official medium benchmark.",
-                "A compact multi-class benchmark for early comparisons between homogeneous and mixed layouts.",
+            "concentric_circles": [
+                "2 numeric inputs, 2 classes, official medium benchmark.",
+                "Uses two hidden layers and is the next step after two_moons.",
             ],
             "crossing_spirals": [
                 "6 numeric inputs, 2 classes, official hard benchmark.",
@@ -1000,7 +1002,7 @@ def _benchmark_section(benchmark: str, language: str) -> tuple[str, list[str]]:
             ],
         },
     }
-    lines = benchmark_lines[lang].get(benchmark, benchmark_lines[lang]["concentric_circles"])
+    lines = benchmark_lines[lang].get(benchmark, benchmark_lines[lang]["two_moons"])
     return section_title, lines
 
 
@@ -1021,9 +1023,9 @@ def workspace_help_html(workspace_id: str, benchmark: str, language: str) -> str
                     "Train in small chunks and read the sample, plot, stepper, and neuron tracker together."
                     if lang == "en"
                     else "Trainiere in kleinen Schritten und lies Sample, Plot, Stepper und Neuron-Tracker gemeinsam.",
-                    "Run Online Delta SA and then compare start, best, end, random, and homogeneous baselines under identical training."
+                    "Run Online Delta SA with one random AF change per step, then compare start, best, end, random, and homogeneous baselines under identical training."
                     if lang == "en"
-                    else "Fuehre Online-Delta-SA aus und vergleiche danach Start, Best, End, Random und homogene Baselines unter gleichen Trainingsbedingungen.",
+                    else "Fuehre Online-Delta-SA mit einer zufaelligen Einzel-AF-Aenderung pro Schritt aus und vergleiche danach Start, Best, End, Random und homogene Baselines unter gleichen Trainingsbedingungen.",
                 ],
             ),
             _benchmark_section(benchmark, language),
@@ -1174,12 +1176,12 @@ def program_handbook_html(language: str) -> str:
         (
             "First experiments" if lang == "en" else "Erste sinnvolle Experimente",
             [
-                "Compare relu vs tanh on iris."
+                "Compare relu vs tanh on two_moons."
                 if lang == "en"
-                else "Vergleiche relu vs tanh auf iris.",
-                "Use concentric_circles for the first complete SA workflow."
+                else "Vergleiche relu vs tanh auf two_moons.",
+                "Use two_moons for the first complete SA workflow."
                 if lang == "en"
-                else "Nutze concentric_circles fuer den ersten vollstaendigen SA-Workflow.",
+                else "Nutze two_moons fuer den ersten vollstaendigen SA-Workflow.",
                 "Use test_activation to read local neuron computations without distraction."
                 if lang == "en"
                 else "Nutze test_activation, um lokale Neuron-Rechnungen ohne Ablenkung zu lesen.",

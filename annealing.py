@@ -7,6 +7,7 @@ import math
 
 from activations import ActivationLayout
 from annealing_objectives import ObjectiveEvaluation
+from configs import SUPPORTED_ACTIVATIONS
 
 
 SUPPORTED_NEIGHBORHOOD_OPERATIONS = ("set_neuron", "fill_layer", "swap_neurons")
@@ -23,6 +24,8 @@ class AnnealingConfig:
     max_steps: int
     min_temperature: float
     neighborhood_operations: tuple[str, ...]
+    operation_probabilities: dict[str, float] | None = None
+    activation_probabilities: dict[str, float] | None = None
 
     def __post_init__(self) -> None:
         if self.start_temperature <= 0.0:
@@ -46,6 +49,16 @@ class AnnealingConfig:
             )
         if not self.neighborhood_operations:
             raise ValueError("Mindestens ein Nachbarschaftstyp muss aktiv sein.")
+        _validate_probability_map(
+            self.operation_probabilities,
+            allowed_keys=SUPPORTED_NEIGHBORHOOD_OPERATIONS,
+            label="operation_probabilities",
+        )
+        _validate_probability_map(
+            self.activation_probabilities,
+            allowed_keys=SUPPORTED_ACTIVATIONS,
+            label="activation_probabilities",
+        )
 
 
 @dataclass
@@ -124,3 +137,20 @@ def annealing_stop_reasons(
     if neighbor_count <= 0:
         reasons.append("no_neighbors")
     return reasons
+
+
+def _validate_probability_map(
+    values: dict[str, float] | None,
+    *,
+    allowed_keys: tuple[str, ...],
+    label: str,
+) -> None:
+    if values is None:
+        return
+    invalid_keys = [key for key in values if key not in allowed_keys]
+    if invalid_keys:
+        raise ValueError(f"{label} enthaelt unbekannte Keys: {', '.join(invalid_keys)}")
+    if any(value < 0.0 for value in values.values()):
+        raise ValueError(f"{label} darf keine negativen Werte enthalten.")
+    if not any(value > 0.0 for value in values.values()):
+        raise ValueError(f"{label} braucht mindestens einen positiven Wert.")

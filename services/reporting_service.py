@@ -30,7 +30,7 @@ def build_report_assets(
     *,
     output_dir: str | Path = OUTPUT_DIR / "report_assets",
     layout_grid_dir: str | Path = OUTPUT_DIR / "layout_grids",
-    demo_sa_dir: str | Path = OUTPUT_DIR / "demo_sa",
+    sa_dir: str | Path = OUTPUT_DIR / "sa_runs",
     neighborhood_summary_path: str | Path = OUTPUT_DIR / "neighborhood_grids" / "summary.csv",
 ) -> ReportAssetBuildResult:
     """Build consolidated CSV tables and plots from existing experiment artifacts."""
@@ -40,7 +40,7 @@ def build_report_assets(
 
     warnings: list[str] = []
     layout_rows = _collect_layout_grid_rows(Path(layout_grid_dir), warnings)
-    sa_rows = _collect_sa_rows(Path(demo_sa_dir), warnings)
+    sa_rows = _collect_sa_rows(Path(sa_dir), warnings)
     neighborhood_rows = _collect_neighborhood_rows(Path(neighborhood_summary_path), warnings)
     benchmark_rows = _build_benchmark_overview(layout_rows, sa_rows, neighborhood_rows)
 
@@ -102,10 +102,10 @@ def _collect_layout_grid_rows(layout_grid_dir: Path, warnings: list[str]) -> lis
     return rows
 
 
-def _collect_sa_rows(demo_sa_dir: Path, warnings: list[str]) -> list[dict[str, object]]:
+def _collect_sa_rows(sa_dir: Path, warnings: list[str]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for benchmark in OFFICIAL_BENCHMARKS:
-        experiment_dir = demo_sa_dir / f"demo_sa_{benchmark}"
+        experiment_dir = sa_dir / f"sa_runs_{benchmark}"
         summary_path = experiment_dir / "summary.json"
         if not summary_path.exists():
             warnings.append(f"Missing SA summary for {benchmark}.")
@@ -356,7 +356,6 @@ def _bar_plot(
 
 def _select_layout_grid_artifact(layout_grid_dir: Path, benchmark: str) -> Path | None:
     preferred = (
-        layout_grid_dir / f"{benchmark}_demo_grid.json",
         layout_grid_dir / f"{benchmark}_layout_grid.json",
     )
     for path in preferred:
@@ -413,12 +412,12 @@ def _format_topology(input_size: int, hidden_sizes: tuple[int, ...], output_size
 
 
 def _default_interpretation(benchmark: str) -> str:
+    if benchmark == "two_moons":
+        return "Easy binary case; use it for quick smoke runs and first suite checks."
     if benchmark == "concentric_circles":
-        return "Primary case; grid baseline currently gives the clearest positive learning signal."
-    if benchmark == "iris":
-        return "Multiclass sanity case; layout grid is strong, SA needs more tuning."
+        return "Medium binary case; useful for validating deeper hidden layouts."
     if benchmark == "crossing_spirals":
-        return "Hard case; current results are near chance and need base-training tuning first."
+        return "Hard binary case; report it with mean/std over seeds, not single runs."
     return ""
 
 

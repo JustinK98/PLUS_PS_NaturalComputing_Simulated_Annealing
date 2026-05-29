@@ -85,7 +85,7 @@ class NetworkViewQtTests(unittest.TestCase):
         preferences = WorkspacePreferences(language="en", detail_mode="expert")
         workflow = ActivationWorkflowWorkspace(
             GuiExperimentConfig(
-                benchmark="iris",
+                benchmark="two_moons",
                 hidden_sizes=(8,),
                 app_mode="activation_workflow",
                 layout_spec="relu",

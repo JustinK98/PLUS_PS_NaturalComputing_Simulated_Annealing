@@ -11,6 +11,7 @@ from PySide6 import QtCore, QtWidgets
 from activations import parse_layout_spec
 from benchmarks import load_benchmark
 from configs import (
+    DEFAULT_ANNEALING_NEIGHBORHOODS,
     DatasetConfig,
     GuiExperimentConfig,
     OUTPUT_DIR,
@@ -433,7 +434,7 @@ class ExperimentBuilderWorkspace(BaseWorkspace):
             sa_evaluation_mode=self.sa_mode_combo.currentText(),
             online_train_policy=self.online_train_policy_combo.currentText(),
             candidate_epochs=self.candidate_epochs_spin.value(),
-            neighborhood_operations=("set_neuron", "fill_layer", "swap_neurons"),
+            neighborhood_operations=DEFAULT_ANNEALING_NEIGHBORHOODS,
             start_temperature=self.start_temp_spin.value(),
             cooling_schedule=self.cooling_schedule_combo.currentText(),
             cooling_parameter=self.cooling_param_spin.value(),

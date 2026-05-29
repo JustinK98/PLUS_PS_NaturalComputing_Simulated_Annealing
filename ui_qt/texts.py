@@ -90,11 +90,11 @@ TEXTS = {
 
 
 RECIPES = {
-    "relu_vs_tanh_iris": {
-        "title": {"de": "ReLU vs. Tanh auf iris", "en": "ReLU vs Tanh on iris"},
+    "relu_vs_tanh_two_moons": {
+        "title": {"de": "ReLU vs. Tanh auf two_moons", "en": "ReLU vs Tanh on two_moons"},
         "body": {
-            "de": "Vergleiche zwei kleine Layouts auf iris mit identischen Seeds. Beobachte Val-Accuracy und ob tanh stabiler, aber langsamer konvergiert.",
-            "en": "Compare two small layouts on iris with identical seeds. Watch validation accuracy and whether tanh converges more smoothly but more slowly.",
+            "de": "Vergleiche zwei kleine Layouts auf two_moons mit identischen Seeds. Beobachte Val-Accuracy und ob tanh stabiler, aber langsamer konvergiert.",
+            "en": "Compare two small layouts on two_moons with identical seeds. Watch validation accuracy and whether tanh converges more smoothly but more slowly.",
         },
     },
     "circles_layout_compare": {

@@ -22,7 +22,7 @@ class CliSmokeTests(unittest.TestCase):
                 "main.py",
                 "run",
                 "--benchmark",
-                "concentric_circles",
+                "two_moons",
                 "--hidden-sizes",
                 "8",
                 "--layout",
@@ -78,7 +78,7 @@ class CliSmokeTests(unittest.TestCase):
                 default_experiment_definition(),
                 experiment_id="cli_smoke_experiment",
                 benchmark="concentric_circles",
-                hidden_sizes=(8,),
+                hidden_sizes=(8, 8),
                 layout_spec="relu",
                 epochs=2,
                 seeds=(5,),
@@ -114,7 +114,7 @@ class CliSmokeTests(unittest.TestCase):
                     "experiment",
                     "layout-grid",
                     "--benchmark",
-                    "concentric_circles",
+                    "two_moons",
                     "--epochs",
                     "1",
                     "--max-candidates",
@@ -130,6 +130,54 @@ class CliSmokeTests(unittest.TestCase):
             self.assertTrue(output_path.exists())
             self.assertIn("layout_grid:", completed.stdout)
             self.assertIn("top layouts:", completed.stdout)
+
+    def test_experiment_suite_subcommand_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "main.py",
+                    "experiment",
+                    "suite",
+                    "--exp",
+                    "online-delta",
+                    "--benchmark",
+                    "two_moons",
+                    "--epochs",
+                    "1",
+                    "--runs",
+                    "1",
+                    "--max-steps",
+                    "2",
+                    "--no-plots",
+                    "--output-root",
+                    temp_dir,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn("suite:", completed.stdout)
+            self.assertIn("summary:", completed.stdout)
+
+            suite_dir = next(Path(temp_dir).iterdir())
+            report = subprocess.run(
+                [
+                    sys.executable,
+                    "main.py",
+                    "experiment",
+                    "report-online-delta",
+                    "--path",
+                    str(suite_dir),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertIn("runs:       1", report.stdout)
+            self.assertIn("online_delta_progress_mean.png", report.stdout)
 
 
 if __name__ == "__main__":

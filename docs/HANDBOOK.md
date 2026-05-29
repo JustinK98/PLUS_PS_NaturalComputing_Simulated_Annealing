@@ -65,8 +65,8 @@ A benchmark is the dataset and split configuration used for training and evaluat
 
 Official benchmarks:
 
-- `concentric_circles`: 2 inputs, 2 classes, topology `2-8-1`, 100 epochs
-- `iris`: 4 inputs, 3 classes, topology `4-8-3`, 150 epochs
+- `two_moons`: 2 inputs, 2 classes, topology `2-8-1`, 100 epochs
+- `concentric_circles`: 2 inputs, 2 classes, topology `2-8-8-1`, 150 epochs
 - `crossing_spirals`: 6 inputs, 2 classes, topology `6-16-16-1`, 250 epochs
 
 `test_activation` remains an internal computation lab, not an official benchmark for reports.
@@ -117,7 +117,7 @@ It affects:
 
 - data splitting
 - weight initialization
-- online-delta batch order and candidate proposals
+- online-delta batch order and random single-neuron AF changes
 - random search sampling
 
 In the Experiment Builder, multiple seeds are important because one single run may be misleading.
@@ -327,7 +327,7 @@ Stop threshold once the search has cooled enough.
 
 ### Activation Workflow
 
-1. start with `concentric_circles`
+1. start with `two_moons`
 2. use a simple start layout like `relu`
 3. inspect one sample, one neuron, and the stepper
 4. train the manual layout once
@@ -367,27 +367,28 @@ This allows:
 - use validation for model selection
 - use test only for final reporting
 - keep the first experiments small and readable
-- for online-delta SA, tune `max_steps`, `batch_size`, `online_train_policy`, temperature/cooling, and neighborhood operations before changing everything else
+- for the official online-delta SA path, keep `set_neuron` as the only neighborhood operation and tune only the core run length, batch, and temperature/cooling parameters
+- use `swap_neurons` only as an ablation and avoid `fill_layer` in the official small-network main experiment
 - only tune `candidate_epochs` when you intentionally run the legacy `short_retrain` mode
 
 ## 11. Guided Experiment Recipes
 
-### Recipe 1: ReLU vs Tanh on `iris`
+### Recipe 1: ReLU vs Tanh on `two_moons`
 
 Goal:
 
-- compare two simple activation layouts on the official medium multiclass benchmark
+- compare two simple activation layouts on the official easy binary benchmark
 
 Suggested setup:
 
-- benchmark: `iris`
+- benchmark: `two_moons`
 - hidden sizes: `8`
 - seeds: `5`
 - mode: `manual_training`
 - layout A: `relu*8`
 - layout B: `tanh*8`
-- epochs: `50` to `120`
-- learning rate: `0.03`
+- epochs: `50` to `100`
+- learning rate: `0.01`
 
 What to watch:
 
@@ -427,7 +428,7 @@ Goal:
 Suggested setup:
 
 - benchmark: `concentric_circles`
-- hidden sizes: `8`
+- hidden sizes: `8 8`
 - mode: `simulated_annealing`
 - start layout: `relu*8`
 - objective: `validation_loss`

@@ -17,7 +17,7 @@ from services.network_projection_service import build_input_projection
 
 class AnalysisServiceTests(unittest.TestCase):
     def test_build_analysis_sample_from_dataset_split(self) -> None:
-        dataset = load_benchmark(DatasetConfig(name="iris", random_state=7))
+        dataset = load_benchmark(DatasetConfig(name="two_moons", random_state=7))
         sample = build_analysis_sample(dataset, "val", 1, language="en")
 
         self.assertEqual(sample.split_name, "val")
@@ -44,7 +44,7 @@ class AnalysisServiceTests(unittest.TestCase):
         self.assertEqual(sample.actual_target_index, 1)
 
     def test_feature_rows_are_sorted_by_scaled_magnitude(self) -> None:
-        dataset = load_benchmark(DatasetConfig(name="iris", random_state=7))
+        dataset = load_benchmark(DatasetConfig(name="two_moons", random_state=7))
         sample = build_analysis_sample(dataset, "val", 0, language="en")
         rows = build_feature_rows(dataset, sample, limit=5)
 

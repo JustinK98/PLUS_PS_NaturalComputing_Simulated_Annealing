@@ -24,7 +24,7 @@ from services.layout_evaluation_service import (
 
 
 def run_layout_grid_command(args) -> None:
-    """Trainiert ein Layout-Grid und speichert ein Demo-Artefakt."""
+    """Trainiert ein Layout-Grid und speichert ein reproduzierbares Artefakt."""
 
     hidden_sizes = tuple(args.hidden_sizes) if args.hidden_sizes else default_hidden_sizes(args.benchmark)
     epochs = args.epochs if args.epochs is not None else default_epochs(args.benchmark)

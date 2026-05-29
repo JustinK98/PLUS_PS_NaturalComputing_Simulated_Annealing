@@ -127,7 +127,7 @@ def build_layout_grid_candidates(
     include_mixed: bool = True,
     max_candidates: int | None = None,
 ) -> tuple[LayoutCandidate, ...]:
-    """Erzeugt ein kleines, reproduzierbares Layout-Grid fuer Demo-Vortraining."""
+    """Erzeugt ein kleines, reproduzierbares Layout-Grid fuer Vortraining."""
 
     candidates: list[LayoutCandidate] = []
     for activation_name in activations:
@@ -379,7 +379,7 @@ def save_layout_grid_result(
     request: LayoutEvaluationRequest,
     result: LayoutEvaluationResult,
 ) -> Path:
-    """Speichert ein Demo-Grid inklusive bestem vortrainiertem Modell."""
+    """Speichert ein Layout-Grid inklusive bestem vortrainiertem Modell."""
 
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

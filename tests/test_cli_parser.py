@@ -50,9 +50,13 @@ class CliParserTests(unittest.TestCase):
             self.parser.parse_args(["gui", "--mode", "presentation"])
 
     def test_run_subcommand_maps_to_single_run(self) -> None:
-        args = self.parser.parse_args(["run", "--benchmark", "iris", "--hidden-sizes", "8"])
+        args = self.parser.parse_args(["run", "--benchmark", "two_moons", "--hidden-sizes", "8"])
         self.assertEqual(resolve_command(args), "run")
         self.assertEqual(args.hidden_sizes, [8])
+
+    def test_iris_benchmark_is_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["run", "--benchmark", "iris"])
 
     def test_experiment_subcommands_map_correctly(self) -> None:
         args = self.parser.parse_args(["experiment", "template", "--output", "tmp/example.json"])
@@ -65,6 +69,46 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(resolve_command(args), "experiment_run")
 
         args = self.parser.parse_args(
+            [
+                "experiment",
+                "suite",
+                "--exp",
+                "online-delta",
+                "--benchmark",
+                "two_moons",
+                "--learning-rate",
+                "2",
+                "--runs",
+                "3",
+                "--start-temperature",
+                "0.03",
+                "--cooling-parameter",
+                "0.95",
+                "--iterations-per-temperature",
+                "5",
+                "--min-temperature",
+                "0.001",
+            ]
+        )
+        self.assertEqual(resolve_command(args), "experiment_suite")
+        self.assertEqual(args.learning_rate, 2)
+        self.assertEqual(args.runs, 3)
+        self.assertEqual(args.start_temperature, 0.03)
+        self.assertEqual(args.cooling_parameter, 0.95)
+        self.assertEqual(args.iterations_per_temperature, 5)
+        self.assertEqual(args.min_temperature, 0.001)
+
+        for exp in ("random-baseline", "all-baseline", "swap-ablation"):
+            args = self.parser.parse_args(
+                ["experiment", "suite", "--exp", exp, "--benchmark", "two_moons"]
+            )
+            self.assertEqual(resolve_command(args), "experiment_suite")
+            self.assertEqual(args.exp, exp)
+
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["experiment", "suite", "--exp", "propose"])
+
+        args = self.parser.parse_args(
             ["experiment", "layout-grid", "--benchmark", "concentric_circles", "--max-candidates", "3"]
         )
         self.assertEqual(resolve_command(args), "experiment_layout_grid")
@@ -73,6 +117,10 @@ class CliParserTests(unittest.TestCase):
         args = self.parser.parse_args(["experiment", "report", "--output-dir", "tmp/report_assets"])
         self.assertEqual(resolve_command(args), "experiment_report")
         self.assertEqual(args.output_dir, "tmp/report_assets")
+
+        args = self.parser.parse_args(["experiment", "report-online-delta", "--path", "outputs/example"])
+        self.assertEqual(resolve_command(args), "experiment_report_online_delta")
+        self.assertEqual(args.path, "outputs/example")
 
 
 if __name__ == "__main__":

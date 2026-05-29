@@ -14,7 +14,7 @@ def build_report_command(args) -> None:
     result = build_report_assets(
         output_dir=Path(args.output_dir),
         layout_grid_dir=Path(args.layout_grid_dir),
-        demo_sa_dir=Path(args.sa_dir),
+        sa_dir=Path(args.sa_dir),
         neighborhood_summary_path=Path(args.neighborhood_summary),
     )
     print(f"report_assets: {result.output_dir}")

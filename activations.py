@@ -14,7 +14,7 @@ kann.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 try:
     import numpy as np
@@ -583,6 +583,101 @@ def generate_neighbors(
     return neighbors
 
 
+def sample_neighbor(
+    layout: ActivationLayout,
+    operations: Sequence[str],
+    rng: np.random.Generator,
+    *,
+    operation_probabilities: Mapping[str, float] | None = None,
+    activation_probabilities: Mapping[str, float] | None = None,
+) -> NeighborResult:
+    """Zieht einen Nachbarn gemaess optionaler Proposal-Verteilung."""
+
+    operation_neighbors = _neighbors_by_operation(layout, operations)
+    available_operations = [
+        operation_name
+        for operation_name, neighbors in operation_neighbors.items()
+        if neighbors
+    ]
+    if not available_operations:
+        raise ValueError("Fuer das aktuelle Layout wurden keine Nachbarn erzeugt.")
+
+    if operation_probabilities is None:
+        all_neighbors = [
+            neighbor
+            for operation_name in available_operations
+            for neighbor in operation_neighbors[operation_name]
+        ]
+        return all_neighbors[int(rng.integers(0, len(all_neighbors)))]
+
+    chosen_operation = _weighted_choice(
+        available_operations,
+        [
+            float(operation_probabilities.get(operation_name, 0.0))
+            for operation_name in available_operations
+        ],
+        rng,
+    )
+    neighbors = operation_neighbors[chosen_operation]
+    if activation_probabilities is None or chosen_operation == "swap_neurons":
+        return neighbors[int(rng.integers(0, len(neighbors)))]
+
+    weights = [
+        _activation_weight_from_neighbor(neighbor, activation_probabilities)
+        for neighbor in neighbors
+    ]
+    return _weighted_choice(neighbors, weights, rng)
+
+
+def sample_set_neuron_neighbor(
+    layout: ActivationLayout,
+    rng: np.random.Generator,
+) -> NeighborResult:
+    """Zieht genau eine einzelne Hidden-Neuron-Aenderung.
+
+    Alle Hidden-Neuronen haben dieselbe Chance, danach wird eine andere
+    Aktivierung aus dem offiziellen Aktivierungsset gleichverteilt gezogen.
+    """
+
+    total_neurons = sum(len(layer) for layer in layout.layers)
+    if total_neurons <= 0:
+        raise ValueError("Das Layout enthaelt keine Hidden-Neuronen.")
+
+    flat_index = int(rng.integers(0, total_neurons))
+    remaining = flat_index
+    layer_index = 0
+    neuron_index = 0
+    for current_layer_index, layer in enumerate(layout.layers):
+        if remaining < len(layer):
+            layer_index = current_layer_index
+            neuron_index = remaining
+            break
+        remaining -= len(layer)
+
+    current_activation = layout.layers[layer_index][neuron_index]
+    alternatives = [
+        activation_name
+        for activation_name in SUPPORTED_ACTIVATIONS
+        if activation_name != current_activation
+    ]
+    if not alternatives:
+        raise ValueError("Keine alternative Aktivierung verfuegbar.")
+    next_activation = alternatives[int(rng.integers(0, len(alternatives)))]
+    updated_layout = layout.replace_neuron(layer_index, neuron_index, next_activation)
+    change = LayoutChange(
+        layer_index=layer_index,
+        neuron_index=neuron_index,
+        before=current_activation,
+        after=next_activation,
+        operation="set_neuron",
+    )
+    return NeighborResult(
+        label=f"set:L{layer_index + 1}:{neuron_index}:{next_activation}",
+        layout=updated_layout,
+        changes=(change,),
+    )
+
+
 def _parse_layer_spec(layer_spec: str, layer_size: int) -> list[str]:
     """Parst die Spezifikation eines einzelnen Hidden-Layers."""
 
@@ -624,6 +719,49 @@ def _parse_activation_token(token: str) -> tuple[str, int]:
     if repeat_count <= 0:
         raise ValueError(f"Die Wiederholungszahl in '{token}' muss positiv sein.")
     return activation_name, repeat_count
+
+
+def _neighbors_by_operation(
+    layout: ActivationLayout,
+    operations: Sequence[str],
+) -> dict[str, list[NeighborResult]]:
+    supported_operations = {"set_neuron", "fill_layer", "swap_neurons"}
+    normalized_operations = tuple(dict.fromkeys(operation for operation in operations if operation))
+    invalid_operations = [operation for operation in normalized_operations if operation not in supported_operations]
+    if invalid_operations:
+        raise ValueError(
+            "Unbekannte Nachbarschaftstypen: " + ", ".join(invalid_operations)
+        )
+
+    result: dict[str, list[NeighborResult]] = {}
+    if "set_neuron" in normalized_operations:
+        result["set_neuron"] = generate_single_step_neighbors(layout)
+    if "fill_layer" in normalized_operations:
+        result["fill_layer"] = generate_fill_layer_neighbors(layout)
+    if "swap_neurons" in normalized_operations:
+        result["swap_neurons"] = generate_swap_neighbors(layout)
+    return result
+
+
+def _weighted_choice(items, weights: Sequence[float], rng: np.random.Generator):
+    weight_array = np.asarray(weights, dtype=np.float64)
+    if np.any(weight_array < 0.0):
+        raise ValueError("Proposal-Gewichte duerfen nicht negativ sein.")
+    if not np.any(weight_array > 0.0):
+        return items[int(rng.integers(0, len(items)))]
+    probabilities = weight_array / float(np.sum(weight_array))
+    index = int(rng.choice(len(items), p=probabilities))
+    return items[index]
+
+
+def _activation_weight_from_neighbor(
+    neighbor: NeighborResult,
+    activation_probabilities: Mapping[str, float],
+) -> float:
+    if not neighbor.changes:
+        return 0.0
+    after_names = {change.after for change in neighbor.changes}
+    return sum(float(activation_probabilities.get(name, 0.0)) for name in after_names)
 
 
 def _parse_layer_reference(layer_token: str, layout: ActivationLayout) -> int:

@@ -14,19 +14,19 @@ class ReportingServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             layout_dir = root / "layout_grids"
-            demo_sa_dir = root / "demo_sa"
+            sa_dir = root / "sa_runs"
             neighborhood_dir = root / "neighborhood_grids"
             output_dir = root / "report_assets"
             layout_dir.mkdir()
             neighborhood_dir.mkdir()
-            _write_layout_grid(layout_dir / "concentric_circles_demo_grid.json")
-            _write_sa_result(demo_sa_dir / "demo_sa_concentric_circles")
+            _write_layout_grid(layout_dir / "concentric_circles_layout_grid.json")
+            _write_sa_result(sa_dir / "sa_runs_concentric_circles")
             _write_neighborhood_summary(neighborhood_dir / "summary.csv")
 
             result = build_report_assets(
                 output_dir=output_dir,
                 layout_grid_dir=layout_dir,
-                demo_sa_dir=demo_sa_dir,
+                sa_dir=sa_dir,
                 neighborhood_summary_path=neighborhood_dir / "summary.csv",
             )
 

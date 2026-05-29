@@ -44,8 +44,8 @@ def run_interactive_setup(
         label="Benchmark",
         explanation=(
             "Waehle den Datensatz, auf dem trainiert werden soll.\n"
-            "- concentric_circles: offizieller Easy-Benchmark mit 2 Eingaben\n"
-            "- iris: offizieller Medium-Benchmark mit 4 Eingaben und 3 Klassen\n"
+            "- two_moons: offizieller Easy-Benchmark mit 2 Eingaben\n"
+            "- concentric_circles: offizieller Medium-Benchmark mit 2 Eingaben\n"
             "- crossing_spirals: offizieller Hard-Benchmark mit 6 Eingaben"
         ),
         options=SUPPORTED_BENCHMARKS,
@@ -183,7 +183,7 @@ def run_interactive_setup(
     use_advanced_settings = _prompt_yes_no(
         label="Erweiterte Einstellungen anpassen",
         explanation=(
-            "Hier koennen Seed und Gewichtsskala angepasst werden.\n"
+            "Hier koennen Seed und Xavier-Gewichtsmultiplikator angepasst werden.\n"
             "Das ist eher fuer bewusstere Experimente interessant."
         ),
         default=False,
@@ -191,7 +191,7 @@ def run_interactive_setup(
     if use_advanced_settings:
         args.weight_scale = _prompt_float(
             label="Gewichtsskala",
-            explanation="Steuert, wie gross die Startgewichte zufaellig initialisiert werden.",
+            explanation="Multipliziert die Xavier/Glorot-uniform-Grenze fuer die Startgewichte.",
             default=args.weight_scale,
             min_value=1e-8,
         )

@@ -12,7 +12,9 @@ configure_runtime_environment()
 from cli.commands.experiment_analyze import analyze_experiment_command
 from cli.commands.experiment_layout_grid import run_layout_grid_command
 from cli.commands.experiment_report import build_report_command
+from cli.commands.experiment_report_online_delta import build_online_delta_report_command
 from cli.commands.experiment_run import run_experiment_command
+from cli.commands.experiment_suite import run_experiment_suite_command
 from cli.commands.experiment_template import create_experiment_template_command
 from cli.commands.gui import run_gui_command
 from cli.commands.single_run import run_single_command
@@ -52,6 +54,9 @@ def _dispatch_command(args: argparse.Namespace) -> None:
     if command == "experiment_run":
         run_experiment_command(args)
         return
+    if command == "experiment_suite":
+        run_experiment_suite_command(args)
+        return
     if command == "experiment_analyze":
         analyze_experiment_command(args)
         return
@@ -63,6 +68,9 @@ def _dispatch_command(args: argparse.Namespace) -> None:
         return
     if command == "experiment_report":
         build_report_command(args)
+        return
+    if command == "experiment_report_online_delta":
+        build_online_delta_report_command(args)
         return
     raise SystemExit(f"Unbekanntes Kommando: {command}")
 

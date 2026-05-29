@@ -27,7 +27,7 @@ class SamplePanelQtTests(unittest.TestCase):
         cls.app = _app()
 
     def test_official_sample_panel_shows_feature_table(self) -> None:
-        dataset = load_benchmark(DatasetConfig(name="iris", random_state=9))
+        dataset = load_benchmark(DatasetConfig(name="two_moons", random_state=9))
         sample = build_analysis_sample(dataset, "val", 0, language="en")
         panel = SamplePanelWidget(language="en")
         panel.set_sample(

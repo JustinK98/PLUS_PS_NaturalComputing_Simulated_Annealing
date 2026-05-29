@@ -32,7 +32,7 @@ class QtSmokeTests(unittest.TestCase):
     def test_main_window_boots_with_two_workspaces(self) -> None:
         window = MainWindow(
             GuiExperimentConfig(
-                benchmark="iris",
+                benchmark="two_moons",
                 hidden_sizes=(8,),
                 app_mode="activation_workflow",
                 layout_spec="relu",
@@ -52,7 +52,7 @@ class QtSmokeTests(unittest.TestCase):
         workspace = ActivationWorkflowWorkspace(
             GuiExperimentConfig(
                 benchmark="concentric_circles",
-                hidden_sizes=(8,),
+                hidden_sizes=(8, 8),
                 app_mode="activation_workflow",
                 layout_spec="relu",
                 epochs=2,
@@ -70,7 +70,7 @@ class QtSmokeTests(unittest.TestCase):
         workspace = ActivationWorkflowWorkspace(
             GuiExperimentConfig(
                 benchmark="concentric_circles",
-                hidden_sizes=(8,),
+                hidden_sizes=(8, 8),
                 app_mode="activation_workflow",
                 layout_spec="relu",
                 mode="expert",
@@ -81,7 +81,7 @@ class QtSmokeTests(unittest.TestCase):
         artifacts = run_single_training_experiment(
             TrainingRunRequest(
                 dataset_config=DatasetConfig(name="concentric_circles", random_state=7),
-                hidden_sizes=(8,),
+                hidden_sizes=(8, 8),
                 layout_spec="relu",
                 training_config=TrainingConfig(epochs=2, learning_rate=0.03, batch_size=16, random_state=7),
                 weight_scale=0.05,
@@ -97,7 +97,7 @@ class QtSmokeTests(unittest.TestCase):
         workspace = ActivationWorkflowWorkspace(
             GuiExperimentConfig(
                 benchmark="concentric_circles",
-                hidden_sizes=(8,),
+                hidden_sizes=(8, 8),
                 app_mode="activation_workflow",
                 layout_spec="relu",
                 mode="expert",
@@ -123,7 +123,7 @@ class QtSmokeTests(unittest.TestCase):
     def test_builder_workspace_loads_saved_results(self) -> None:
         workspace = ExperimentBuilderWorkspace(
             GuiExperimentConfig(
-                benchmark="iris",
+                benchmark="two_moons",
                 hidden_sizes=(8,),
                 app_mode="experiment_builder",
                 layout_spec="relu",

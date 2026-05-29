@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from activations import generate_neighbors
+from activations import generate_neighbors, sample_neighbor
 from annealing import AnnealingConfig, AnnealingState, AnnealingStep, acceptance_probability
 from annealing_objectives import LayoutObjectiveEvaluator
 from annealing_schedules import temperature_for_step
@@ -64,7 +64,16 @@ class AnnealingRunner:
         if not neighbors:
             raise ValueError("Fuer das aktuelle Layout wurden keine Nachbarn erzeugt.")
 
-        chosen_neighbor = neighbors[int(self.rng.integers(0, len(neighbors)))]
+        if self.config.operation_probabilities or self.config.activation_probabilities:
+            chosen_neighbor = sample_neighbor(
+                current_layout,
+                self.config.neighborhood_operations,
+                self.rng,
+                operation_probabilities=self.config.operation_probabilities,
+                activation_probabilities=self.config.activation_probabilities,
+            )
+        else:
+            chosen_neighbor = neighbors[int(self.rng.integers(0, len(neighbors)))]
         candidate_evaluation = self.evaluator.evaluate(chosen_neighbor.layout)
 
         current_score = previous_evaluation.comparable_score

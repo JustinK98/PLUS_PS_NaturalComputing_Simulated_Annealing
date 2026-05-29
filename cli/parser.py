@@ -132,6 +132,114 @@ def build_parser() -> argparse.ArgumentParser:
         help="Wie viele Ranking-Eintraege nach Abschluss gezeigt werden.",
     )
 
+    experiment_suite_parser = experiment_subparsers.add_parser(
+        "suite",
+        help="Fuehre die offiziellen Terminal-Benchmark-Suites aus.",
+    )
+    experiment_suite_parser.add_argument(
+        "--exp",
+        choices=("online-delta", "random-baseline", "all-baseline", "swap-ablation"),
+        default="online-delta",
+        help="Suite-Typ: online-delta, random-baseline, all-baseline oder swap-ablation.",
+    )
+    experiment_suite_parser.add_argument(
+        "--benchmark",
+        choices=SUPPORTED_BENCHMARKS,
+        default=DEFAULT_BENCHMARK,
+        help="Offizieller Basics-Benchmark. Default: two_moons.",
+    )
+    experiment_suite_parser.add_argument(
+        "--learning-rate",
+        type=int,
+        default=1,
+        help="Index der Lernraten-Preset-Gruppe aus configs/experiment_suites.json.",
+    )
+    experiment_suite_parser.add_argument(
+        "--runs",
+        type=int,
+        default=None,
+        help="Anzahl unabhaengiger Runs. Default kommt aus configs/experiment_suites.json.",
+    )
+    experiment_suite_parser.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        help=argparse.SUPPRESS,
+    )
+    experiment_suite_parser.add_argument(
+        "--seed-count",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    experiment_suite_parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Optionales Epochen-Override fuer schnelle Smokes.",
+    )
+    experiment_suite_parser.add_argument(
+        "--random-layouts",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    experiment_suite_parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Optionales Override fuer Online-Delta-SA-Schritte.",
+    )
+    experiment_suite_parser.add_argument(
+        "--start-temperature",
+        type=float,
+        default=None,
+        help="Optionales Override fuer die Online-Delta-SA-Starttemperatur.",
+    )
+    experiment_suite_parser.add_argument(
+        "--cooling-parameter",
+        type=float,
+        default=None,
+        help="Optionales Override fuer den geometrischen Cooling-Faktor.",
+    )
+    experiment_suite_parser.add_argument(
+        "--iterations-per-temperature",
+        type=int,
+        default=None,
+        help="Optionales Override fuer Schritte pro Temperaturstufe.",
+    )
+    experiment_suite_parser.add_argument(
+        "--min-temperature",
+        type=float,
+        default=None,
+        help="Optionales Override fuer die minimale SA-Temperatur.",
+    )
+    experiment_suite_parser.add_argument(
+        "--output-root",
+        default="outputs/experiment_suites",
+        help="Basisordner fuer Suite-Artefakte.",
+    )
+    experiment_suite_parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Erzeuge nur JSON/CSV-Artefakte, keine PNG-Plots.",
+    )
+
+    online_delta_report_parser = experiment_subparsers.add_parser(
+        "report-online-delta",
+        help="Aggregiere Online-Delta-SA-Historien aus Suite- oder Builder-Ergebnissen.",
+    )
+    online_delta_report_parser.add_argument(
+        "--path",
+        required=True,
+        help="Pfad zu einem Online-Delta-Run, Suite-Ordner oder Experiment-Builder-Ordner.",
+    )
+    online_delta_report_parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optionaler Zielordner. Default: <path>/online_delta_report.",
+    )
+
     experiment_analyze_parser = experiment_subparsers.add_parser(
         "analyze",
         help="Analysiere ein bereits gespeichertes Experiment.",
@@ -153,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     layout_grid_parser = experiment_subparsers.add_parser(
         "layout-grid",
-        help="Trainiert ein Layout-Grid und speichert ein vortrainiertes Demo-Artefakt.",
+        help="Trainiert ein Layout-Grid und speichert ein reproduzierbares Artefakt.",
     )
     layout_grid_parser.add_argument(
         "--benchmark",
@@ -189,7 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-candidates",
         type=int,
         default=None,
-        help="Optionales Limit fuer schnelle Demo-Suchen.",
+        help="Optionales Limit fuer schnelle Suchlaeufe.",
     )
     layout_grid_parser.add_argument(
         "--no-mixed",
@@ -210,7 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     report_parser = experiment_subparsers.add_parser(
         "report",
-        help="Erzeuge CSV-/Plot-Artefakte fuer Bericht und Demo aus vorhandenen Ergebnissen.",
+        help="Erzeuge CSV-/Plot-Artefakte fuer Berichte aus vorhandenen Ergebnissen.",
     )
     report_parser.add_argument(
         "--output-dir",
@@ -225,13 +333,8 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument(
         "--sa-dir",
         dest="sa_dir",
-        default="outputs/demo_sa",
+        default="outputs/sa_runs",
         help="Ordner mit SA-Ergebnissen fuer Report-Artefakte.",
-    )
-    report_parser.add_argument(
-        "--demo-sa-dir",
-        dest="sa_dir",
-        help=argparse.SUPPRESS,
     )
     report_parser.add_argument(
         "--neighborhood-summary",
@@ -262,7 +365,7 @@ def _add_common_run_arguments(parser: argparse.ArgumentParser) -> None:
         choices=SUPPORTED_BENCHMARKS,
         default=DEFAULT_BENCHMARK,
         help=(
-            "Offizieller CSV-Benchmark: concentric_circles, iris oder crossing_spirals."
+            "Offizieller CSV-Benchmark: two_moons, concentric_circles oder crossing_spirals."
         ),
     )
     parser.add_argument(

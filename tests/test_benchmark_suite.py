@@ -12,15 +12,15 @@ from model import ModularMLP
 
 class BenchmarkSuiteTests(unittest.TestCase):
     def test_official_benchmark_defaults_match_shared_spec(self) -> None:
-        self.assertEqual(default_hidden_sizes("concentric_circles"), (8,))
-        self.assertEqual(default_hidden_sizes("iris"), (8,))
+        self.assertEqual(default_hidden_sizes("two_moons"), (8,))
+        self.assertEqual(default_hidden_sizes("concentric_circles"), (8, 8))
         self.assertEqual(default_hidden_sizes("crossing_spirals"), (16, 16))
-        self.assertEqual(default_epochs("concentric_circles"), 100)
-        self.assertEqual(default_epochs("iris"), 150)
+        self.assertEqual(default_epochs("two_moons"), 100)
+        self.assertEqual(default_epochs("concentric_circles"), 150)
         self.assertEqual(default_epochs("crossing_spirals"), 250)
 
-    def test_concentric_circles_bundle_uses_binary_output_metadata(self) -> None:
-        dataset = load_benchmark(DatasetConfig(name="concentric_circles", random_state=5))
+    def test_two_moons_bundle_uses_binary_output_metadata(self) -> None:
+        dataset = load_benchmark(DatasetConfig(name="two_moons", random_state=5))
 
         self.assertEqual(dataset.input_size, 2)
         self.assertEqual(dataset.output_size, 2)
@@ -30,8 +30,8 @@ class BenchmarkSuiteTests(unittest.TestCase):
 
     def test_official_csv_benchmarks_have_expected_shapes(self) -> None:
         expected = {
+            "two_moons": (2, 2, 1),
             "concentric_circles": (2, 2, 1),
-            "iris": (4, 3, 3),
             "crossing_spirals": (6, 2, 1),
         }
         for benchmark, (inputs, classes, model_outputs) in expected.items():
@@ -44,8 +44,12 @@ class BenchmarkSuiteTests(unittest.TestCase):
                 self.assertGreater(dataset.validation_size, 0)
                 self.assertGreater(dataset.test_size, 0)
 
+    def test_iris_is_not_an_official_benchmark_anymore(self) -> None:
+        with self.assertRaises(ValueError):
+            load_benchmark(DatasetConfig(name="iris", random_state=11))
+
     def test_binary_output_model_still_returns_two_class_probabilities(self) -> None:
-        dataset = load_benchmark(DatasetConfig(name="concentric_circles", random_state=7))
+        dataset = load_benchmark(DatasetConfig(name="two_moons", random_state=7))
         layout = parse_layout_spec("swish*8", (8,))
         model = ModularMLP(
             input_size=dataset.input_size,
@@ -65,6 +69,25 @@ class BenchmarkSuiteTests(unittest.TestCase):
         self.assertTrue(np.allclose(probabilities.sum(axis=1), 1.0, atol=1e-6))
         self.assertGreaterEqual(loss, 0.0)
         self.assertEqual(gradients["weights"][-1].shape[1], 1)
+
+    def test_xavier_initialization_and_zero_biases(self) -> None:
+        dataset = load_benchmark(DatasetConfig(name="two_moons", random_state=7))
+        layout = parse_layout_spec("relu", (8,))
+        model = ModularMLP(
+            input_size=dataset.input_size,
+            hidden_sizes=(8,),
+            output_size=dataset.model_output_size,
+            layout=layout,
+            num_classes=dataset.output_size,
+            random_state=7,
+        )
+
+        for weight in model.weights:
+            self.assertTrue(np.all(np.isfinite(weight)))
+            self.assertGreater(float(np.max(weight)), 0.0)
+            self.assertLess(float(np.min(weight)), 0.0)
+        for bias in model.biases:
+            np.testing.assert_allclose(bias, np.zeros_like(bias))
 
     def test_extended_activation_set_parses_cleanly(self) -> None:
         layout = parse_layout_spec("identity*8|swish*4", (8, 4))

@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from activations import ActivationLayout, generate_neighbors, parse_layout_spec
+from activations import (
+    ActivationLayout,
+    generate_neighbors,
+    parse_layout_spec,
+    sample_neighbor,
+    sample_set_neuron_neighbor,
+)
 from annealing import AnnealingConfig, acceptance_probability
 from annealing_schedules import temperature_for_step
 from benchmarks import DatasetBundle, load_benchmark
@@ -400,7 +406,21 @@ def _online_step(session: OnlineAnnealingSession) -> OnlineAnnealingStep:
     neighbors = generate_neighbors(previous_layout, session.request.annealing_config.neighborhood_operations)
     if not neighbors:
         raise ValueError("Fuer das aktuelle Layout wurden keine Nachbarn erzeugt.")
-    chosen_neighbor = neighbors[int(session.rng.integers(0, len(neighbors)))]
+    if (
+        session.request.annealing_config.operation_probabilities
+        or session.request.annealing_config.activation_probabilities
+    ):
+        chosen_neighbor = sample_neighbor(
+            previous_layout,
+            session.request.annealing_config.neighborhood_operations,
+            session.rng,
+            operation_probabilities=session.request.annealing_config.operation_probabilities,
+            activation_probabilities=session.request.annealing_config.activation_probabilities,
+        )
+    elif tuple(session.request.annealing_config.neighborhood_operations) == ("set_neuron",):
+        chosen_neighbor = sample_set_neuron_neighbor(previous_layout, session.rng)
+    else:
+        chosen_neighbor = neighbors[int(session.rng.integers(0, len(neighbors)))]
 
     session.model.set_layout(chosen_neighbor.layout)
     candidate_loss_after, candidate_acc_after = evaluate_batch(session.model, X_batch, y_batch)

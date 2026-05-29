@@ -30,7 +30,7 @@ class HelpIntegrationQtTests(unittest.TestCase):
     def test_main_window_opens_handbook_dialog(self) -> None:
         window = MainWindow(
             GuiExperimentConfig(
-                benchmark="iris",
+                benchmark="two_moons",
                 hidden_sizes=(8,),
                 app_mode="activation_workflow",
                 layout_spec="relu",
@@ -48,7 +48,7 @@ class HelpIntegrationQtTests(unittest.TestCase):
     def test_activation_workflow_has_help_tab(self) -> None:
         workspace = ActivationWorkflowWorkspace(
             GuiExperimentConfig(
-                benchmark="iris",
+                benchmark="two_moons",
                 hidden_sizes=(8,),
                 app_mode="activation_workflow",
                 layout_spec="relu",
@@ -65,7 +65,7 @@ class HelpIntegrationQtTests(unittest.TestCase):
     def test_builder_has_real_help_tab(self) -> None:
         builder = ExperimentBuilderWorkspace(
             GuiExperimentConfig(
-                benchmark="iris",
+                benchmark="two_moons",
                 hidden_sizes=(8,),
                 app_mode="experiment_builder",
                 layout_spec="relu",
