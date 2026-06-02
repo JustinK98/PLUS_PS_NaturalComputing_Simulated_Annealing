@@ -54,7 +54,7 @@ def build_analysis_sample(
     custom_raw_sample: np.ndarray | None = None,
     analysis_target_index: int | None = None,
 ) -> AnalysisSample:
-    """Erzeugt ein UI-neutrales Analyse-Sample fuer Workflow, Builder und Preview."""
+    """Erzeugt ein UI-neutrales Analyse-Sample fuer die Workflow-Demo."""
 
     actual_target_index: int | None
     source_label: str

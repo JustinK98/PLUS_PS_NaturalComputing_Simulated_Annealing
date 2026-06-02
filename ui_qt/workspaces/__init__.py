@@ -1,9 +1,7 @@
-"""Qt-Workspaces fuer Activation Workflow und Experiment Builder."""
+"""Oeffentliches Qt-Workspace-Modul fuer die fokussierte Online-Delta-Demo."""
 
 from .activation_workflow_workspace import ActivationWorkflowWorkspace
-from .experiment_builder_workspace import ExperimentBuilderWorkspace
 
 __all__ = [
     "ActivationWorkflowWorkspace",
-    "ExperimentBuilderWorkspace",
 ]

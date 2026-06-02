@@ -56,6 +56,8 @@ class NetworkViewWidget(QtWidgets.QGraphicsView):
         self._model: ModularMLP | None = None
         self._options = VisualOptions()
         self._selected_hidden: tuple[int, int] | None = None
+        self._highlighted_hidden: frozenset[tuple[int, int]] = frozenset()
+        self._highlight_status: str | None = None
         self._input_projection: InputProjection | None = None
         self._node_positions: dict[tuple[str, int, int], QtCore.QPointF] = {}
         self._scene_rect = QtCore.QRectF(0.0, 0.0, self._options.min_scene_width, self._options.min_scene_height)
@@ -75,6 +77,19 @@ class NetworkViewWidget(QtWidgets.QGraphicsView):
 
     def set_selected_hidden(self, selection: tuple[int, int] | None) -> None:
         self._selected_hidden = selection
+        self._redraw()
+
+    def set_highlighted_hidden(
+        self,
+        positions: frozenset[tuple[int, int]] | set[tuple[int, int]] | tuple[tuple[int, int], ...],
+        status: str | None,
+    ) -> None:
+        """Markiert geänderte Hidden-Neuronen als akzeptiert oder verworfen."""
+
+        if status not in {None, "accepted", "rejected"}:
+            raise ValueError("status muss accepted, rejected oder None sein.")
+        self._highlighted_hidden = frozenset(positions)
+        self._highlight_status = status
         self._redraw()
 
     def set_input_projection(self, projection: InputProjection | None) -> None:
@@ -295,7 +310,13 @@ class NetworkViewWidget(QtWidgets.QGraphicsView):
     ) -> None:
         scene = self.scene()
         assert scene is not None
-        pen = QtGui.QPen(QtGui.QColor("#1d4ed8" if selected else "#cbd5e1"), 2.4 if selected else 1.2)
+        highlighted = (layer_index, neuron_index) in self._highlighted_hidden
+        if highlighted and self._highlight_status == "accepted":
+            pen = QtGui.QPen(QtGui.QColor("#16a34a"), 3.6)
+        elif highlighted and self._highlight_status == "rejected":
+            pen = QtGui.QPen(QtGui.QColor("#dc2626"), 3.6)
+        else:
+            pen = QtGui.QPen(QtGui.QColor("#1d4ed8" if selected else "#cbd5e1"), 2.4 if selected else 1.2)
         brush = QtGui.QBrush(QtGui.QColor(ACTIVATION_COLORS[activation_name]))
         item = _NeuronItem(
             QtCore.QRectF(point.x() - radius, point.y() - radius, radius * 2, radius * 2),

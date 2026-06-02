@@ -170,7 +170,11 @@ def train_one_batch(
 
 
 def train_model(
-    model: ModularMLP, dataset: DatasetBundle, config: TrainingConfig
+    model: ModularMLP,
+    dataset: DatasetBundle,
+    config: TrainingConfig,
+    *,
+    include_test_metrics: bool = True,
 ) -> TrainingResult:
     """Trainiert das Modell mit Mini-Batch Gradient Descent.
 
@@ -179,11 +183,13 @@ def train_model(
     2. Fuer jeden Batch: Loss + Gradienten berechnen
     3. Gewichte aktualisieren
     4. Am Ende der Epoche Train- und Val-Metriken messen
-    5. Nach allen Epochen final auf dem Test-Split auswerten
+    5. Optional nach allen Epochen final auf dem Test-Split auswerten
     """
 
     updates = list(iterate_training_epochs(model, dataset, config))
     history = updates[-1].history_snapshot if updates else empty_history()
+    if not include_test_metrics:
+        return TrainingResult(history=history, test_metrics={})
     test_loss, test_acc = model.evaluate(dataset.X_test, dataset.y_test)
     return TrainingResult(history=history, test_metrics={"loss": test_loss, "accuracy": test_acc})
 

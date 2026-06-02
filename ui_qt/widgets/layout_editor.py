@@ -23,7 +23,6 @@ class LayoutEditorWidget(QtWidgets.QWidget):
         self._hidden_sizes = tuple(hidden_sizes)
         self._layout = parse_layout_spec(layout_spec, self._hidden_sizes)
         self._neuron_combos: list[list[QtWidgets.QComboBox]] = []
-        self._layer_fill_combos: list[QtWidgets.QComboBox] = []
         self._synchronizing = False
 
         root = QtWidgets.QVBoxLayout(self)
@@ -65,18 +64,11 @@ class LayoutEditorWidget(QtWidgets.QWidget):
         self._synchronizing = True
         self.tabs.clear()
         self._neuron_combos.clear()
-        self._layer_fill_combos.clear()
         for layer_index, layer in enumerate(self._layout.layers):
             page = QtWidgets.QWidget()
             page_layout = QtWidgets.QVBoxLayout(page)
             fill_row = QtWidgets.QHBoxLayout()
             fill_row.addWidget(QtWidgets.QLabel(f"Layer {layer_index + 1}"))
-            fill_combo = QtWidgets.QComboBox()
-            fill_combo.addItems(SUPPORTED_ACTIVATIONS)
-            fill_combo.currentTextChanged.connect(
-                lambda activation_name, idx=layer_index: self._fill_layer(idx, activation_name)
-            )
-            fill_row.addWidget(fill_combo)
             fill_row.addStretch(1)
             page_layout.addLayout(fill_row)
 
@@ -96,16 +88,7 @@ class LayoutEditorWidget(QtWidgets.QWidget):
             page_layout.addStretch(1)
             self.tabs.addTab(page, f"L{layer_index + 1}")
             self._neuron_combos.append(neuron_row)
-            self._layer_fill_combos.append(fill_combo)
-            if len(set(layer)) == 1:
-                fill_combo.setCurrentText(layer[0])
         self._synchronizing = False
-
-    def _fill_layer(self, layer_index: int, activation_name: str) -> None:
-        if self._synchronizing:
-            return
-        self._layout = self._layout.replace_layer(layer_index, activation_name)
-        self._sync_after_widget_change()
 
     def _set_neuron(self, layer_index: int, neuron_index: int, activation_name: str) -> None:
         if self._synchronizing:

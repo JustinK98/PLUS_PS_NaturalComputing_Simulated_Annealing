@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 import numpy as np
 
@@ -21,7 +22,6 @@ class OnlineAnnealingTrainingServiceTests(unittest.TestCase):
         seed: int = 12,
         temperature: float = 1.0,
         max_steps: int = 4,
-        train_policy: str = "accepted",
         batch_size: int = 16,
     ) -> OnlineAnnealingRequest:
         return OnlineAnnealingRequest(
@@ -46,7 +46,6 @@ class OnlineAnnealingTrainingServiceTests(unittest.TestCase):
             ),
             weight_scale=0.05,
             random_state=seed,
-            train_policy=train_policy,
         )
 
     def test_start_evaluation_uses_one_batch_and_does_not_train(self) -> None:
@@ -61,6 +60,17 @@ class OnlineAnnealingTrainingServiceTests(unittest.TestCase):
         self.assertIsNotNone(snapshot.current_evaluation)
         for before, after in zip(before_weights, session.model.weights, strict=True):
             np.testing.assert_allclose(before, after)
+
+    def test_validation_only_start_evaluation_does_not_compute_test_metrics(self) -> None:
+        session = create_online_session(
+            replace(self._request(seed=5), include_test_metrics=False)
+        )
+
+        snapshot = evaluate_online_start(session, "en")
+
+        assert snapshot.current_evaluation is not None
+        self.assertTrue(np.isnan(snapshot.current_evaluation.test_loss))
+        self.assertTrue(np.isnan(snapshot.current_evaluation.test_accuracy))
 
     def test_candidate_evaluation_does_not_include_training_update(self) -> None:
         session = create_online_session(self._request(seed=7, temperature=1_000_000.0))
@@ -94,7 +104,7 @@ class OnlineAnnealingTrainingServiceTests(unittest.TestCase):
         rejected_session = None
         for seed in range(1, 80):
             session = create_online_session(
-                self._request(seed=seed, temperature=1e-12, train_policy="none")
+                self._request(seed=seed, temperature=1e-12)
             )
             evaluate_online_start(session, "en")
             previous_layout = session.model.layout.to_compact_spec()

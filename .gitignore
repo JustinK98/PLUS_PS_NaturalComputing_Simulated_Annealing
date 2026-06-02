@@ -3,5 +3,7 @@
 .venv/
 __pycache__/
 outputs/
+outputs_archive/
 Selfie_Justin_Klein/
 *.pyc
+*.swp

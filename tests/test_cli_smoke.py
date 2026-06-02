@@ -4,12 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path
-
-from search_spaces import SearchSpaceDefinition
-from services.experiment_service import default_experiment_definition, save_experiment_definition
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,97 +35,6 @@ class CliSmokeTests(unittest.TestCase):
         )
         self.assertIn("Training", completed.stdout)
 
-    def test_experiment_template_and_analyze_subcommands_smoke(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            template_path = Path(temp_dir) / "template.json"
-            completed = subprocess.run(
-                [sys.executable, "main.py", "experiment", "template", "--output", str(template_path)],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            self.assertTrue(template_path.exists())
-            self.assertIn("template:", completed.stdout)
-
-            analyze = subprocess.run(
-                [
-                    sys.executable,
-                    "main.py",
-                    "experiment",
-                    "analyze",
-                    "--path",
-                    "outputs/backend_regression/backend_regression_grid",
-                    "--max-ranking",
-                    "2",
-                ],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            self.assertIn("Top ranking entries", analyze.stdout)
-
-    def test_experiment_run_subcommand_smoke(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config_path = Path(temp_dir) / "experiment.json"
-            definition = replace(
-                default_experiment_definition(),
-                experiment_id="cli_smoke_experiment",
-                benchmark="concentric_circles",
-                hidden_sizes=(8, 8),
-                layout_spec="relu",
-                epochs=2,
-                seeds=(5,),
-                save_json=False,
-                search_space=SearchSpaceDefinition(search_type="none"),
-            )
-            save_experiment_definition(definition, config_path)
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "main.py",
-                    "experiment",
-                    "run",
-                    "--config",
-                    str(config_path),
-                    "--max-ranking",
-                    "1",
-                ],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            self.assertIn("Top ranking entries", completed.stdout)
-
-    def test_layout_grid_subcommand_smoke(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "grid.json"
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "main.py",
-                    "experiment",
-                    "layout-grid",
-                    "--benchmark",
-                    "two_moons",
-                    "--epochs",
-                    "1",
-                    "--max-candidates",
-                    "3",
-                    "--output",
-                    str(output_path),
-                ],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            self.assertTrue(output_path.exists())
-            self.assertIn("layout_grid:", completed.stdout)
-            self.assertIn("top layouts:", completed.stdout)
-
     def test_experiment_suite_subcommand_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             completed = subprocess.run(
@@ -160,8 +64,18 @@ class CliSmokeTests(unittest.TestCase):
             )
             self.assertIn("suite:", completed.stdout)
             self.assertIn("summary:", completed.stdout)
+            self.assertIn("test_metrics:   validation-only", completed.stdout)
 
             suite_dir = next(Path(temp_dir).iterdir())
+            learning_rate_dir = suite_dir / "learning_rate_0.010"
+            summary_text = (learning_rate_dir / "summary.csv").read_text(encoding="utf-8")
+            run_text = next((learning_rate_dir / "runs").glob("*.json")).read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("test_loss", summary_text)
+            self.assertNotIn("test_accuracy", summary_text)
+            self.assertNotIn("test_loss", run_text)
+            self.assertNotIn("test_accuracy", run_text)
             report = subprocess.run(
                 [
                     sys.executable,
@@ -178,6 +92,82 @@ class CliSmokeTests(unittest.TestCase):
             )
             self.assertIn("runs:       1", report.stdout)
             self.assertIn("online_delta_progress_mean.png", report.stdout)
+
+    def test_experiment_suite_online_delta_visual_artifacts_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "main.py",
+                    "experiment",
+                    "suite",
+                    "--exp",
+                    "online-delta",
+                    "--benchmark",
+                    "two_moons",
+                    "--epochs",
+                    "1",
+                    "--runs",
+                    "1",
+                    "--max-steps",
+                    "2",
+                    "--start-temperature",
+                    "1000000",
+                    "--export-layout-frames",
+                    "--output-root",
+                    temp_dir,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            suite_dir = next(Path(temp_dir).iterdir())
+            learning_rate_dir = suite_dir / "learning_rate_0.010"
+            self.assertTrue(list((learning_rate_dir / "plots_single").glob("*_layout_summary.png")))
+            self.assertTrue(list((learning_rate_dir / "plots_single").glob("*_accepted_timeline.png")))
+            frame_dirs = list((learning_rate_dir / "layout_frames").iterdir())
+            self.assertEqual(len(frame_dirs), 1)
+            self.assertTrue((frame_dirs[0] / "frame_000_start.png").exists())
+            self.assertTrue((frame_dirs[0] / "accepted_changes.csv").exists())
+            self.assertTrue(list(frame_dirs[0].glob("frame_*_step_*.png")))
+
+    def test_experiment_suite_skips_layout_frames_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "main.py",
+                    "experiment",
+                    "suite",
+                    "--exp",
+                    "online-delta",
+                    "--benchmark",
+                    "two_moons",
+                    "--epochs",
+                    "1",
+                    "--runs",
+                    "1",
+                    "--max-steps",
+                    "2",
+                    "--start-temperature",
+                    "1000000",
+                    "--output-root",
+                    temp_dir,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            suite_dir = next(Path(temp_dir).iterdir())
+            learning_rate_dir = suite_dir / "learning_rate_0.010"
+            self.assertTrue(list((learning_rate_dir / "plots_single").glob("*_layout_summary.png")))
+            self.assertTrue(list((learning_rate_dir / "plots_single").glob("*_accepted_timeline.png")))
+            self.assertFalse((learning_rate_dir / "layout_frames").exists())
+            self.assertFalse((suite_dir / "aggregate" / "test_loss_by_layout.png").exists())
 
 
 if __name__ == "__main__":

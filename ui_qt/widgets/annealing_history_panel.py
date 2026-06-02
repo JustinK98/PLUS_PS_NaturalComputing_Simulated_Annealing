@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6 import QtWidgets
 
-from services.annealing_session_service import AnnealingSessionSnapshot
+from services.online_annealing_training_service import OnlineAnnealingSnapshot
 
 from .plot_widgets import AnnealingPlotWidget
 
@@ -33,7 +33,7 @@ class AnnealingHistoryPanel(QtWidgets.QWidget):
             "No annealing history yet." if self._language == "en" else "Noch keine Annealing-History."
         )
 
-    def set_snapshot(self, snapshot: AnnealingSessionSnapshot, language: str | None = None) -> None:
+    def set_snapshot(self, snapshot: OnlineAnnealingSnapshot, language: str | None = None) -> None:
         if language is not None:
             self._language = language
         if not snapshot.is_initialized:
@@ -45,25 +45,23 @@ class AnnealingHistoryPanel(QtWidgets.QWidget):
             (),
             {
                 "history": list(snapshot.history),
+                "start_evaluation": snapshot.start_evaluation,
+                "start_temperature": (
+                    snapshot.history[0].temperature
+                    if snapshot.history
+                    else snapshot.current_temperature
+                ),
             },
         )()
         self.plot.set_state(state_like)
         lines = []
         for step in snapshot.history[-8:]:
-            if getattr(snapshot, "sa_evaluation_mode", "") == "online_delta":
-                lines.append(
-                    (
-                        f"step={step.step_index} epoch={step.epoch_index} batch={step.batch_index} "
-                        f"accepted={step.accepted} delta={step.delta:+.4f} "
-                        f"before={step.batch_loss_before:.4f} after={step.candidate_loss_after:.4f} "
-                        f"trained={step.trained_after_accept}"
-                    )
-                )
-                continue
             lines.append(
                 (
-                    f"step={step.step_index} T={step.temperature:.3f} accepted={step.accepted} "
-                    f"delta={step.delta:+.4f} p={step.acceptance_probability:.4f}"
+                    f"step={step.step_index} epoch={step.epoch_index} batch={step.batch_index} "
+                    f"accepted={step.accepted} delta={step.delta:+.4f} "
+                    f"before={step.batch_loss_before:.4f} after={step.candidate_loss_after:.4f} "
+                    f"trained={step.trained_after_accept}"
                 )
             )
         self.text.setPlainText(

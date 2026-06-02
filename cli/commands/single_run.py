@@ -11,7 +11,6 @@ from services.training_service import TrainingRunRequest, run_single_training_ex
 from terminal_viz import (
     render_dataset_summary,
     render_layout,
-    render_layout_diff,
     render_neighbor_preview,
     render_training_summary,
 )
@@ -35,7 +34,6 @@ def run_single_command(args) -> None:
             ),
             weight_scale=args.weight_scale,
             random_state=args.seed,
-            neighbor_operations=tuple(args.neighbor_op),
         )
     )
 
@@ -48,12 +46,6 @@ def run_single_command(args) -> None:
     print(render_dataset_summary(artifacts.dataset))
     print()
     print(render_layout(artifacts.base_layout, title="Basis-Layout"))
-
-    if artifacts.neighbor_result is not None:
-        print()
-        print(render_layout(artifacts.neighbor_result.layout, title="Nachbar-Layout"))
-        print()
-        print(render_layout_diff(artifacts.base_layout, artifacts.neighbor_result.layout))
 
     if visualization_config.preview_neighbors > 0:
         neighbors = generate_single_step_neighbors(artifacts.training_layout)
@@ -74,9 +66,7 @@ def run_single_command(args) -> None:
         _show_or_save_plots(
             benchmark_name=artifacts.dataset.name,
             base_layout=artifacts.base_layout,
-            neighbor_layout=(
-                artifacts.neighbor_result.layout if artifacts.neighbor_result is not None else None
-            ),
+            neighbor_layout=None,
             history=artifacts.training_result.history,
             visualization_config=visualization_config,
         )

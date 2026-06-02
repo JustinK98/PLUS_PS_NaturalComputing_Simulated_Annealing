@@ -6,7 +6,7 @@ from services.online_delta_reporting_service import build_online_delta_report
 
 
 def build_online_delta_report_command(args) -> None:
-    """Builds Online-Delta aggregate artifacts from suite or builder outputs."""
+    """Builds Online-Delta aggregate artifacts from suite outputs."""
 
     result = build_online_delta_report(args.path, args.output_dir)
 

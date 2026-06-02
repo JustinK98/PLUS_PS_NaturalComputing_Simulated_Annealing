@@ -20,7 +20,7 @@ from configs import SUPPORTED_ACTIVATIONS
 
 @dataclass(frozen=True)
 class OnlineDeltaRun:
-    """Normalized Online-Delta run payload from suite or Experiment Builder JSON."""
+    """Normalized Online-Delta suite-run payload."""
 
     source_path: Path
     run_id: str
@@ -98,6 +98,8 @@ def build_online_delta_report(
         warning_path = report_dir / "warnings.txt"
         warning_path.write_text("\n".join(warnings) + "\n", encoding="utf-8")
         artifacts.append(warning_path)
+    else:
+        (report_dir / "warnings.txt").unlink(missing_ok=True)
 
     return OnlineDeltaReportResult(
         input_path=root,
@@ -147,41 +149,6 @@ def _normalize_payload(
             start_layout=str(payload.get("start_layout", "")),
             best_layout=str(payload.get("best_layout", "")),
             end_layout=str(payload.get("end_layout", "")),
-            history=tuple(history),
-        )
-
-    extra = payload.get("extra", {})
-    if isinstance(extra, dict) and extra.get("sa_evaluation_mode") == "online_delta":
-        run_definition = payload.get("run_definition", {})
-        history = _normalize_history(extra.get("annealing_history", []))
-        if not history:
-            warnings.append(f"{path}: Experiment Builder Online-Delta run has no usable history.")
-            return None
-        if int(history[0].get("step_index", -1)) != 0:
-            warnings.append(f"{path}: history starts after step 0; start metrics are unavailable.")
-        return OnlineDeltaRun(
-            source_path=path,
-            run_id=str(run_definition.get("run_id", path.stem)) if isinstance(run_definition, dict) else path.stem,
-            experiment_id=(
-                str(run_definition.get("experiment_id", ""))
-                if isinstance(run_definition, dict)
-                else ""
-            ),
-            benchmark=(
-                str(run_definition.get("benchmark", ""))
-                if isinstance(run_definition, dict)
-                else ""
-            ),
-            seed=(
-                _optional_int(run_definition.get("seed"))
-                if isinstance(run_definition, dict)
-                else None
-            ),
-            layout_seed=None,
-            learning_rate=_learning_rate_from_builder_payload(payload),
-            start_layout=str(extra.get("start_layout_spec", "")),
-            best_layout=str(extra.get("best_layout_spec", payload.get("layout_spec", ""))),
-            end_layout=str(extra.get("end_layout_spec", "")),
             history=tuple(history),
         )
 
@@ -456,22 +423,6 @@ def _flatten_layout(layout_spec: str) -> tuple[str, ...]:
             else:
                 values.append(token)
     return tuple(values)
-
-
-def _learning_rate_from_builder_payload(payload: dict[str, Any]) -> float | None:
-    run_definition = payload.get("run_definition", {})
-    if isinstance(run_definition, dict):
-        config_values = run_definition.get("config_values", {})
-        if isinstance(config_values, dict):
-            value = _optional_float(config_values.get("learning_rate"))
-            if value is not None:
-                return value
-    extra = payload.get("extra", {})
-    if isinstance(extra, dict):
-        effective = extra.get("effective_parameters", {})
-        if isinstance(effective, dict):
-            return _optional_float(effective.get("learning_rate"))
-    return None
 
 
 def _optional_int(value: object) -> int | None:

@@ -81,14 +81,32 @@ class NetworkViewQtTests(unittest.TestCase):
         self.assertGreater(view.transform().m11(), 0.0)
         view.close()
 
+    def test_network_view_tracks_sa_highlight_status(self) -> None:
+        view = NetworkViewWidget()
+        layout = parse_layout_spec("relu", (8,))
+        model = ModularMLP(
+            input_size=2,
+            hidden_sizes=(8,),
+            output_size=1,
+            layout=layout,
+            random_state=5,
+        )
+        view.set_model(model)
+
+        view.set_highlighted_hidden({(0, 3)}, "accepted")
+        self.assertEqual(view._highlighted_hidden, frozenset({(0, 3)}))
+        self.assertEqual(view._highlight_status, "accepted")
+
+        view.set_highlighted_hidden({(0, 4)}, "rejected")
+        self.assertEqual(view._highlighted_hidden, frozenset({(0, 4)}))
+        self.assertEqual(view._highlight_status, "rejected")
+        view.close()
+
     def test_activation_workflow_exposes_resizable_network_splitter(self) -> None:
         preferences = WorkspacePreferences(language="en", detail_mode="expert")
         workflow = ActivationWorkflowWorkspace(
             GuiExperimentConfig(
                 benchmark="two_moons",
-                hidden_sizes=(8,),
-                app_mode="activation_workflow",
-                layout_spec="relu",
                 mode="expert",
                 language="en",
             ),

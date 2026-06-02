@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from activations import ACTIVATION_SHORT_NAMES, ActivationLayout, NeighborResult, diff_layouts
+from activations import ACTIVATION_SHORT_NAMES, ActivationLayout, NeighborResult
 from benchmarks import DatasetBundle
 
 
@@ -50,24 +50,6 @@ def render_layout(layout: ActivationLayout, title: str = "Layout") -> str:
             lines.append("  " + " | ".join(chunk))
 
     lines.append(f"Kompakt: {layout.to_compact_spec()}")
-    return "\n".join(lines)
-
-
-def render_layout_diff(base_layout: ActivationLayout, other_layout: ActivationLayout) -> str:
-    """Zeigt Unterschiede zwischen zwei Layouts neuronweise an."""
-
-    changes = diff_layouts(base_layout, other_layout)
-    lines = ["Layout-Diff", "==========="]
-
-    if not changes:
-        lines.append("Keine Unterschiede.")
-        return "\n".join(lines)
-
-    for change in changes:
-        lines.append(
-            f"L{change.layer_index + 1} n{change.neuron_index:02d}: "
-            f"{change.before} -> {change.after}"
-        )
     return "\n".join(lines)
 
 

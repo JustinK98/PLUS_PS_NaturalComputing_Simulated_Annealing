@@ -3,51 +3,59 @@ from __future__ import annotations
 import unittest
 
 from cli.parser import build_parser, resolve_command
-from main import _normalize_compat_argv
 
 
 class CliParserTests(unittest.TestCase):
     def setUp(self) -> None:
         self.parser = build_parser()
 
-    def test_gui_subcommand_uses_new_mode_flag(self) -> None:
+    def test_gui_subcommand_exposes_only_demo_configuration(self) -> None:
         args = self.parser.parse_args(
-            ["gui", "--mode", "experiment_builder", "--detail-level", "expert", "--language", "en"]
+            [
+                "gui",
+                "--profile",
+                "tuned_20260530",
+            ]
         )
         self.assertEqual(resolve_command(args), "gui")
-        self.assertEqual(args.gui_app_mode, "experiment_builder")
-        self.assertEqual(args.gui_mode, "expert")
-        self.assertEqual(args.gui_language, "en")
+        self.assertEqual(args.gui_profile, "tuned_20260530")
 
-    def test_activation_workflow_is_default_gui_mode(self) -> None:
+    def test_gui_rejects_removed_language_and_detail_flags(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--detail-level", "expert"])
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--language", "en"])
+
+    def test_gui_subcommand_resolves_without_workspace_selector(self) -> None:
         args = self.parser.parse_args(["gui"])
         self.assertEqual(resolve_command(args), "gui")
-        self.assertEqual(args.gui_app_mode, "activation_workflow")
+        self.assertFalse(hasattr(args, "gui_app_mode"))
 
-        normalized = _normalize_compat_argv(["--mode", "activation_workflow"])
-        args = self.parser.parse_args(normalized)
-        self.assertEqual(resolve_command(args), "gui")
-        self.assertEqual(args.gui_app_mode, "activation_workflow")
+    def test_legacy_top_level_gui_aliases_are_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["--gui"])
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["--mode", "activation_workflow"])
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--gui-app-mode", "activation_workflow"])
 
-    def test_legacy_gui_flag_maps_to_gui_command(self) -> None:
-        normalized = _normalize_compat_argv(["--gui", "--gui-app-mode", "activation_workflow"])
-        args = self.parser.parse_args(normalized)
-        self.assertEqual(resolve_command(args), "gui")
-        self.assertEqual(args.gui_app_mode, "activation_workflow")
-
-    def test_top_level_mode_alias_maps_to_gui_command(self) -> None:
-        normalized = _normalize_compat_argv(["--mode", "activation_workflow"])
-        args = self.parser.parse_args(normalized)
-        self.assertEqual(resolve_command(args), "gui")
-        self.assertEqual(args.gui_app_mode, "activation_workflow")
-
-    def test_removed_gui_modes_are_rejected(self) -> None:
+    def test_removed_gui_workspace_selector_is_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--mode", "activation_workflow"])
         with self.assertRaises(SystemExit):
             self.parser.parse_args(["gui", "--mode", "demo"])
         with self.assertRaises(SystemExit):
             self.parser.parse_args(["gui", "--mode", "playground"])
         with self.assertRaises(SystemExit):
             self.parser.parse_args(["gui", "--mode", "presentation"])
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--mode", "experiment_builder"])
+
+    def test_gui_rejects_free_topology_and_initial_layout_overrides(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--hidden-sizes", "16", "16"])
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["gui", "--layout", "tanh"])
 
     def test_run_subcommand_maps_to_single_run(self) -> None:
         args = self.parser.parse_args(["run", "--benchmark", "two_moons", "--hidden-sizes", "8"])
@@ -59,15 +67,6 @@ class CliParserTests(unittest.TestCase):
             self.parser.parse_args(["run", "--benchmark", "iris"])
 
     def test_experiment_subcommands_map_correctly(self) -> None:
-        args = self.parser.parse_args(["experiment", "template", "--output", "tmp/example.json"])
-        self.assertEqual(resolve_command(args), "experiment_template")
-
-        args = self.parser.parse_args(["experiment", "analyze", "--path", "outputs/example"])
-        self.assertEqual(resolve_command(args), "experiment_analyze")
-
-        args = self.parser.parse_args(["experiment", "run", "--config", "tmp/example.json"])
-        self.assertEqual(resolve_command(args), "experiment_run")
-
         args = self.parser.parse_args(
             [
                 "experiment",
@@ -88,6 +87,9 @@ class CliParserTests(unittest.TestCase):
                 "5",
                 "--min-temperature",
                 "0.001",
+                "--evaluation-profile",
+                "tuned_20260530",
+                "--export-layout-frames",
             ]
         )
         self.assertEqual(resolve_command(args), "experiment_suite")
@@ -97,6 +99,8 @@ class CliParserTests(unittest.TestCase):
         self.assertEqual(args.cooling_parameter, 0.95)
         self.assertEqual(args.iterations_per_temperature, 5)
         self.assertEqual(args.min_temperature, 0.001)
+        self.assertEqual(args.evaluation_profile, "tuned_20260530")
+        self.assertTrue(args.export_layout_frames)
 
         for exp in ("random-baseline", "all-baseline", "swap-ablation"):
             args = self.parser.parse_args(
@@ -108,19 +112,35 @@ class CliParserTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.parser.parse_args(["experiment", "suite", "--exp", "propose"])
 
-        args = self.parser.parse_args(
-            ["experiment", "layout-grid", "--benchmark", "concentric_circles", "--max-candidates", "3"]
-        )
-        self.assertEqual(resolve_command(args), "experiment_layout_grid")
-        self.assertEqual(args.max_candidates, 3)
-
-        args = self.parser.parse_args(["experiment", "report", "--output-dir", "tmp/report_assets"])
-        self.assertEqual(resolve_command(args), "experiment_report")
-        self.assertEqual(args.output_dir, "tmp/report_assets")
-
         args = self.parser.parse_args(["experiment", "report-online-delta", "--path", "outputs/example"])
         self.assertEqual(resolve_command(args), "experiment_report_online_delta")
         self.assertEqual(args.path, "outputs/example")
+
+        args = self.parser.parse_args(
+            [
+                "experiment",
+                "tune",
+                "--benchmark",
+                "all",
+                "--phase",
+                "sa-screen",
+                "--workers",
+                "2",
+                "--resume",
+                "outputs/hyperparameter_tuning/example",
+                "--export-layout-frames",
+            ]
+        )
+        self.assertEqual(resolve_command(args), "experiment_tune")
+        self.assertEqual(args.benchmark, "all")
+        self.assertEqual(args.phase, "sa-screen")
+        self.assertEqual(args.workers, 2)
+        self.assertEqual(args.resume, "outputs/hyperparameter_tuning/example")
+        self.assertTrue(args.export_layout_frames)
+
+        for removed_command in ("template", "analyze", "run", "layout-grid", "report"):
+            with self.assertRaises(SystemExit):
+                self.parser.parse_args(["experiment", removed_command])
 
 
 if __name__ == "__main__":

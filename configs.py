@@ -30,24 +30,13 @@ SUPPORTED_BENCHMARKS = OFFICIAL_BENCHMARKS
 INTERNAL_BENCHMARKS = ("test_activation",)
 ALL_BENCHMARKS = (*SUPPORTED_BENCHMARKS, *INTERNAL_BENCHMARKS)
 SUPPORTED_ACTIVATIONS = ("relu", "gelu", "sigmoid", "tanh", "swish", "identity")
-LEGACY_ACTIVATIONS = ("leaky_relu",)
-SUPPORTED_GUI_MODES = ("beginner", "expert")
-SUPPORTED_GUI_LANGUAGES = ("de", "en")
-SUPPORTED_GUI_APP_MODES = (
-    "activation_workflow",
-    "experiment_builder",
-)
-SUPPORTED_SA_EVALUATION_MODES = ("online_delta", "short_retrain")
-SUPPORTED_ONLINE_TRAIN_POLICIES = ("accepted", "improved_only", "none")
 
 
 # Standardwerte fuer einen schnellen Einstieg.
-# Wenn das Projekt einfach mit `python main.py` gestartet wird, werden genau
-# diese Defaults benutzt, sofern der interaktive Assistent nichts anderes setzt.
+# Diese Defaults werden fuer schnelle CLI-Laeufe und die GUI-Demo verwendet.
 DEFAULT_BENCHMARK = "two_moons"
 DEFAULT_LAYOUT = "relu"
 DEFAULT_RANDOM_SEED = 42
-DEFAULT_GUI_APP_MODE = "activation_workflow"
 DEFAULT_EPOCHS = 120
 DEFAULT_LEARNING_RATE = 0.01
 DEFAULT_BATCH_SIZE = 32
@@ -55,10 +44,6 @@ DEFAULT_WEIGHT_SCALE = 1.0
 DEFAULT_VALIDATION_SIZE = 0.2
 DEFAULT_TEST_SIZE = 0.2
 DEFAULT_NEIGHBOR_PREVIEW = 6
-DEFAULT_ANNEALING_OBJECTIVE = "validation_loss"
-DEFAULT_SA_EVALUATION_MODE = "online_delta"
-DEFAULT_ONLINE_TRAIN_POLICY = "accepted"
-DEFAULT_ANNEALING_CANDIDATE_EPOCHS = 20
 DEFAULT_ANNEALING_START_TEMPERATURE = 0.03
 DEFAULT_ANNEALING_COOLING_SCHEDULE = "geometric"
 DEFAULT_ANNEALING_COOLING_PARAMETER = 0.95
@@ -66,11 +51,6 @@ DEFAULT_ANNEALING_ITERATIONS_PER_TEMPERATURE = 5
 DEFAULT_ANNEALING_MAX_STEPS = 120
 DEFAULT_ANNEALING_MIN_TEMPERATURE = 0.001
 DEFAULT_ANNEALING_NEIGHBORHOODS = ("set_neuron",)
-DEFAULT_EXPERIMENT_OUTPUT_SUBDIR = "experiments"
-DEFAULT_EXPERIMENT_SEARCH_TYPE = "none"
-DEFAULT_EXPERIMENT_RANDOM_SEARCH_SAMPLES = 8
-MIN_HIDDEN_LAYERS = 1
-MAX_HIDDEN_LAYERS = 4
 
 
 # Kleine, bewusst gut lesbare Architekturen fuer die drei Datensaetze.
@@ -90,8 +70,7 @@ DEFAULT_EPOCHS_BY_BENCHMARK = {
 OUTPUT_DIR = Path("outputs")
 
 
-# Diese Texte werden sowohl in der CLI-Hilfe als auch im interaktiven Assistenten
-# verwendet. So bleibt die Erklaerung an genau einer Stelle gepflegt.
+# Diese Texte werden fuer die CLI-Hilfe zentral gepflegt.
 LAYOUT_SYNTAX_EXAMPLES = """Layout-Syntax:
   relu|tanh
       gesamte Layer: Hidden-Layer 1 nutzt relu, Hidden-Layer 2 nutzt tanh
@@ -109,27 +88,6 @@ LAYOUT_SYNTAX_EXAMPLES = """Layout-Syntax:
       Beispiel mit drei Hidden-Layern
 """
 
-NEIGHBOR_OPERATION_EXAMPLES = """Neighbor-Operationen:
-  set:L1:0:tanh
-      setze Neuron 0 in Hidden-Layer 1 auf tanh
-
-  fill:L2:sigmoid
-      setze den gesamten zweiten Hidden-Layer auf sigmoid
-
-  cycle:L1:3
-      wechsle Neuron 3 in Hidden-Layer 1 zur naechsten Aktivierung
-
-  swap:L2:0:4
-      tausche die Aktivierungen zweier Neuronen im zweiten Hidden-Layer
-
-Hinweis:
-  Layer-Indizes sind L1, L2, L3, ...
-  Neuronen-Indizes sind absichtlich nullbasiert, damit sie direkt zu Python passen.
-  Der offizielle Online-Delta-Hauptversuch nutzt set_neuron only; swap_neurons
-  ist nur Ablation, fill_layer nicht Teil des Hauptpfads.
-"""
-
-
 @dataclass(frozen=True)
 class DatasetConfig:
     """Konfiguration fuer das Laden und Aufteilen eines Datensatzes.
@@ -141,24 +99,6 @@ class DatasetConfig:
     name: str
     validation_size: float = DEFAULT_VALIDATION_SIZE
     test_size: float = DEFAULT_TEST_SIZE
-    random_state: int = DEFAULT_RANDOM_SEED
-
-
-@dataclass(frozen=True)
-class ModelConfig:
-    """Beschreibt die Struktur des MLPs.
-
-    Wichtige Stellschrauben:
-    - `hidden_sizes`: Anzahl der Neuronen in den Hidden-Layern
-    - `layout_spec`: Welche Aktivierungen pro Layer/Neuron genutzt werden
-    - `weight_scale`: Wie "gross" die Startgewichte zufaellig gezogen werden
-    """
-
-    input_size: int
-    hidden_sizes: tuple[int, ...]
-    output_size: int
-    layout_spec: str
-    weight_scale: float = DEFAULT_WEIGHT_SCALE
     random_state: int = DEFAULT_RANDOM_SEED
 
 
@@ -198,9 +138,6 @@ class GuiExperimentConfig:
     """Konfigurationsobjekt fuer den Start der Qt-GUI."""
 
     benchmark: str
-    hidden_sizes: tuple[int, ...]
-    app_mode: str = DEFAULT_GUI_APP_MODE
-    layout_spec: str = DEFAULT_LAYOUT
     epochs: int = DEFAULT_EPOCHS
     learning_rate: float = DEFAULT_LEARNING_RATE
     batch_size: int = DEFAULT_BATCH_SIZE
@@ -208,6 +145,7 @@ class GuiExperimentConfig:
     random_state: int = DEFAULT_RANDOM_SEED
     mode: str = "beginner"
     language: str = "de"
+    gui_profile: str = "demo"
 
 
 def default_hidden_sizes(benchmark_name: str) -> tuple[int, ...]:
@@ -225,7 +163,6 @@ def default_hidden_sizes(benchmark_name: str) -> tuple[int, ...]:
             f"Unbekannter Benchmark '{benchmark_name}'. Erlaubt sind: {supported}"
         ) from exc
 
-
 def default_epochs(benchmark_name: str) -> int:
     """Liefert die standardmaessige Trainingsdauer fuer einen Benchmark."""
 
@@ -236,9 +173,3 @@ def default_epochs(benchmark_name: str) -> int:
         raise ValueError(
             f"Unbekannter Benchmark '{benchmark_name}'. Erlaubt sind: {supported}"
         ) from exc
-
-
-def format_hidden_sizes(hidden_sizes: tuple[int, ...]) -> str:
-    """Formatiert eine Folge von Hidden-Sizes kompakt fuer Anzeige und Logs."""
-
-    return " / ".join(str(size) for size in hidden_sizes)

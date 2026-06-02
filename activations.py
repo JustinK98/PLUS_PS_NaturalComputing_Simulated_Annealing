@@ -14,7 +14,7 @@ kann.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Sequence
 
 try:
     import numpy as np
@@ -23,11 +23,10 @@ except ImportError as exc:
         "Dieses Projekt benoetigt NumPy. Installation z. B. mit 'pip install numpy'."
     ) from exc
 
-from configs import LEGACY_ACTIVATIONS, SUPPORTED_ACTIVATIONS
+from configs import SUPPORTED_ACTIVATIONS
 
 
 Array = np.ndarray
-LEAKY_RELU_SLOPE = 0.01
 
 
 @dataclass(frozen=True)
@@ -97,18 +96,6 @@ def sigmoid_derivative(values: Array) -> Array:
     return sigmoid_values * (1.0 - sigmoid_values)
 
 
-def leaky_relu(values: Array) -> Array:
-    """Leaky ReLU: negative Werte behalten eine kleine Steigung."""
-
-    return np.where(values > 0.0, values, LEAKY_RELU_SLOPE * values)
-
-
-def leaky_relu_derivative(values: Array) -> Array:
-    """Ableitung der Leaky ReLU."""
-
-    return np.where(values > 0.0, 1.0, LEAKY_RELU_SLOPE)
-
-
 def swish(values: Array) -> Array:
     """Swish: glatte, nichtlineare Aktivierung mit Sigmoid-Gating."""
 
@@ -136,7 +123,6 @@ def identity_derivative(values: Array) -> Array:
 
 ACTIVATIONS = {
     "relu": ActivationFunction("relu", relu, relu_derivative),
-    "leaky_relu": ActivationFunction("leaky_relu", leaky_relu, leaky_relu_derivative),
     "gelu": ActivationFunction("gelu", gelu, gelu_derivative),
     "sigmoid": ActivationFunction("sigmoid", sigmoid, sigmoid_derivative),
     "tanh": ActivationFunction("tanh", tanh, tanh_derivative),
@@ -146,7 +132,6 @@ ACTIVATIONS = {
 
 ACTIVATION_SHORT_NAMES = {
     "relu": "REL",
-    "leaky_relu": "LRE",
     "gelu": "GEL",
     "sigmoid": "SIG",
     "tanh": "TAN",
@@ -156,7 +141,6 @@ ACTIVATION_SHORT_NAMES = {
 
 ACTIVATION_COLORS = {
     "relu": "#3b82f6",
-    "leaky_relu": "#f59e0b",
     "gelu": "#a855f7",
     "sigmoid": "#10b981",
     "tanh": "#ef4444",
@@ -166,7 +150,6 @@ ACTIVATION_COLORS = {
 
 ACTIVATION_FORMULAS = {
     "relu": "a = max(0, z)",
-    "leaky_relu": f"a = z falls z > 0, sonst {LEAKY_RELU_SLOPE} * z",
     "gelu": "a = 0.5 * z * (1 + tanh(sqrt(2/pi) * (z + 0.044715*z^3)))",
     "sigmoid": "a = 1 / (1 + exp(-z))",
     "tanh": "a = tanh(z)",
@@ -221,15 +204,6 @@ class ActivationLayout:
         new_layers[layer_index][neuron_index] = activation_name
         return ActivationLayout(tuple(tuple(layer) for layer in new_layers))
 
-    def replace_layer(self, layer_index: int, activation_name: str) -> "ActivationLayout":
-        """Ersetzt einen kompletten Hidden-Layer durch eine Aktivierung."""
-
-        validate_activation_name(activation_name)
-        _validate_layer_index(self, layer_index)
-        new_layers = [list(layer) for layer in self.layers]
-        new_layers[layer_index] = [activation_name] * len(new_layers[layer_index])
-        return ActivationLayout(tuple(tuple(layer) for layer in new_layers))
-
     def swap_neurons(
         self, layer_index: int, first_index: int, second_index: int
     ) -> "ActivationLayout":
@@ -243,15 +217,6 @@ class ActivationLayout:
             new_layers[layer_index][first_index],
         )
         return ActivationLayout(tuple(tuple(layer) for layer in new_layers))
-
-    def cycle_neuron(self, layer_index: int, neuron_index: int) -> "ActivationLayout":
-        """Schaltet ein Neuron zur naechsten Aktivierung weiter."""
-
-        _validate_position(self, layer_index, neuron_index)
-        current_name = self.layers[layer_index][neuron_index]
-        current_position = SUPPORTED_ACTIVATIONS.index(current_name)
-        next_name = SUPPORTED_ACTIVATIONS[(current_position + 1) % len(SUPPORTED_ACTIVATIONS)]
-        return self.replace_neuron(layer_index, neuron_index, next_name)
 
     def with_hidden_sizes(self, hidden_sizes: Sequence[int]) -> "ActivationLayout":
         """Passt ein Layout moeglichst sanft an neue Hidden-Sizes an.
@@ -285,35 +250,6 @@ class ActivationLayout:
             new_layers.append(tuple(source_layer))
             last_known_activation = source_layer[-1]
 
-        return ActivationLayout(tuple(new_layers))
-
-    def add_layer(
-        self,
-        layer_size: int,
-        activation_name: str = "relu",
-        position: int | None = None,
-    ) -> "ActivationLayout":
-        """Fuegt einen Hidden-Layer an einer Position hinzu."""
-
-        if layer_size <= 0:
-            raise ValueError("Ein neuer Hidden-Layer braucht mindestens ein Neuron.")
-        validate_activation_name(activation_name)
-        new_layer = tuple([activation_name] * layer_size)
-        new_layers = list(self.layers)
-        insert_position = len(new_layers) if position is None else position
-        if insert_position < 0 or insert_position > len(new_layers):
-            raise ValueError("Die Einfuegeposition fuer den neuen Layer ist ungueltig.")
-        new_layers.insert(insert_position, new_layer)
-        return ActivationLayout(tuple(new_layers))
-
-    def remove_layer(self, layer_index: int) -> "ActivationLayout":
-        """Entfernt einen Hidden-Layer, sofern mindestens einer uebrig bleibt."""
-
-        _validate_layer_index(self, layer_index)
-        if self.num_hidden_layers == 1:
-            raise ValueError("Das Layout muss mindestens einen Hidden-Layer behalten.")
-        new_layers = list(self.layers)
-        new_layers.pop(layer_index)
         return ActivationLayout(tuple(new_layers))
 
     def flatten(self) -> tuple[str, ...]:
@@ -356,7 +292,7 @@ def validate_activation_name(activation_name: str) -> None:
     """Prueft, ob ein Aktivierungsname im Projekt erlaubt ist."""
 
     if activation_name not in ACTIVATIONS:
-        supported = ", ".join((*SUPPORTED_ACTIVATIONS, *LEGACY_ACTIVATIONS))
+        supported = ", ".join(SUPPORTED_ACTIVATIONS)
         raise ValueError(
             f"Nicht unterstuetzte Aktivierung '{activation_name}'. Erlaubt sind: {supported}"
         )
@@ -391,6 +327,28 @@ def parse_layout_spec(layout_spec: str, hidden_sizes: Sequence[int]) -> Activati
     for raw_layer, layer_size in zip(raw_layers, hidden_sizes, strict=True):
         parsed_layers.append(tuple(_parse_layer_spec(raw_layer, layer_size)))
     return ActivationLayout(tuple(parsed_layers))
+
+
+def random_layout_spec(
+    hidden_sizes: Sequence[int],
+    random_state: int | np.random.Generator,
+) -> str:
+    """Erzeugt ein reproduzierbares random-mixed Layout fuer Hidden-Layer."""
+
+    if not hidden_sizes:
+        raise ValueError("Es muss mindestens eine Hidden-Layer-Groesse angegeben werden.")
+    rng = (
+        random_state
+        if isinstance(random_state, np.random.Generator)
+        else np.random.default_rng(int(random_state))
+    )
+    layers: list[str] = []
+    for layer_size in hidden_sizes:
+        if layer_size <= 0:
+            raise ValueError("Alle Hidden-Layer muessen mindestens ein Neuron haben.")
+        layer = rng.choice(SUPPORTED_ACTIVATIONS, size=int(layer_size), replace=True)
+        layers.append(",".join(str(name) for name in layer))
+    return "|".join(layers)
 
 
 def apply_activation_layout(values: Array, layer_layout: Sequence[str]) -> Array:
@@ -447,19 +405,6 @@ def diff_layouts(base_layout: ActivationLayout, other_layout: ActivationLayout) 
     return tuple(changes)
 
 
-def apply_neighbor_operations(layout: ActivationLayout, operations: Sequence[str]) -> NeighborResult:
-    """Wendet eine oder mehrere Neighbor-Operationen nacheinander an."""
-
-    current_layout = layout
-    all_changes: list[LayoutChange] = []
-    for operation in operations:
-        current_layout, changes = _apply_single_neighbor_operation(current_layout, operation)
-        all_changes.extend(changes)
-
-    label = " | ".join(operations) if operations else "identity"
-    return NeighborResult(label=label, layout=current_layout, changes=tuple(all_changes))
-
-
 def generate_single_step_neighbors(layout: ActivationLayout) -> list[NeighborResult]:
     """Erzeugt alle Nachbarn im Hamming-Abstand 1."""
 
@@ -483,39 +428,6 @@ def generate_single_step_neighbors(layout: ActivationLayout) -> list[NeighborRes
                         changes=(change,),
                     )
                 )
-    return neighbors
-
-
-def generate_fill_layer_neighbors(layout: ActivationLayout) -> list[NeighborResult]:
-    """Erzeugt Nachbarn, die jeweils einen kompletten Layer vereinheitlichen."""
-
-    neighbors: list[NeighborResult] = []
-    for layer_index, layer in enumerate(layout.layers):
-        for candidate in SUPPORTED_ACTIVATIONS:
-            if all(activation_name == candidate for activation_name in layer):
-                continue
-            changed_positions = [
-                neuron_index
-                for neuron_index, activation_name in enumerate(layer)
-                if activation_name != candidate
-            ]
-            changes = tuple(
-                LayoutChange(
-                    layer_index=layer_index,
-                    neuron_index=neuron_index,
-                    before=layer[neuron_index],
-                    after=candidate,
-                    operation="fill_layer",
-                )
-                for neuron_index in changed_positions
-            )
-            neighbors.append(
-                NeighborResult(
-                    label=f"fill:L{layer_index + 1}:{candidate}",
-                    layout=layout.replace_layer(layer_index, candidate),
-                    changes=changes,
-                )
-            )
     return neighbors
 
 
@@ -561,11 +473,10 @@ def generate_neighbors(
 
     Unterstuetzte Operationen:
     - `set_neuron`: ein einzelnes Neuron auf eine andere Aktivierung setzen
-    - `fill_layer`: einen kompletten Layer auf eine Aktivierung setzen
     - `swap_neurons`: zwei Aktivierungen im selben Layer tauschen
     """
 
-    supported_operations = {"set_neuron", "fill_layer", "swap_neurons"}
+    supported_operations = {"set_neuron", "swap_neurons"}
     normalized_operations = tuple(dict.fromkeys(operation for operation in operations if operation))
     invalid_operations = [operation for operation in normalized_operations if operation not in supported_operations]
     if invalid_operations:
@@ -576,8 +487,6 @@ def generate_neighbors(
     neighbors: list[NeighborResult] = []
     if "set_neuron" in normalized_operations:
         neighbors.extend(generate_single_step_neighbors(layout))
-    if "fill_layer" in normalized_operations:
-        neighbors.extend(generate_fill_layer_neighbors(layout))
     if "swap_neurons" in normalized_operations:
         neighbors.extend(generate_swap_neighbors(layout))
     return neighbors
@@ -587,46 +496,13 @@ def sample_neighbor(
     layout: ActivationLayout,
     operations: Sequence[str],
     rng: np.random.Generator,
-    *,
-    operation_probabilities: Mapping[str, float] | None = None,
-    activation_probabilities: Mapping[str, float] | None = None,
 ) -> NeighborResult:
-    """Zieht einen Nachbarn gemaess optionaler Proposal-Verteilung."""
+    """Zieht einen konkreten Nachbarn gleichverteilt."""
 
-    operation_neighbors = _neighbors_by_operation(layout, operations)
-    available_operations = [
-        operation_name
-        for operation_name, neighbors in operation_neighbors.items()
-        if neighbors
-    ]
-    if not available_operations:
+    neighbors = generate_neighbors(layout, operations)
+    if not neighbors:
         raise ValueError("Fuer das aktuelle Layout wurden keine Nachbarn erzeugt.")
-
-    if operation_probabilities is None:
-        all_neighbors = [
-            neighbor
-            for operation_name in available_operations
-            for neighbor in operation_neighbors[operation_name]
-        ]
-        return all_neighbors[int(rng.integers(0, len(all_neighbors)))]
-
-    chosen_operation = _weighted_choice(
-        available_operations,
-        [
-            float(operation_probabilities.get(operation_name, 0.0))
-            for operation_name in available_operations
-        ],
-        rng,
-    )
-    neighbors = operation_neighbors[chosen_operation]
-    if activation_probabilities is None or chosen_operation == "swap_neurons":
-        return neighbors[int(rng.integers(0, len(neighbors)))]
-
-    weights = [
-        _activation_weight_from_neighbor(neighbor, activation_probabilities)
-        for neighbor in neighbors
-    ]
-    return _weighted_choice(neighbors, weights, rng)
+    return neighbors[int(rng.integers(0, len(neighbors)))]
 
 
 def sample_set_neuron_neighbor(
@@ -721,65 +597,6 @@ def _parse_activation_token(token: str) -> tuple[str, int]:
     return activation_name, repeat_count
 
 
-def _neighbors_by_operation(
-    layout: ActivationLayout,
-    operations: Sequence[str],
-) -> dict[str, list[NeighborResult]]:
-    supported_operations = {"set_neuron", "fill_layer", "swap_neurons"}
-    normalized_operations = tuple(dict.fromkeys(operation for operation in operations if operation))
-    invalid_operations = [operation for operation in normalized_operations if operation not in supported_operations]
-    if invalid_operations:
-        raise ValueError(
-            "Unbekannte Nachbarschaftstypen: " + ", ".join(invalid_operations)
-        )
-
-    result: dict[str, list[NeighborResult]] = {}
-    if "set_neuron" in normalized_operations:
-        result["set_neuron"] = generate_single_step_neighbors(layout)
-    if "fill_layer" in normalized_operations:
-        result["fill_layer"] = generate_fill_layer_neighbors(layout)
-    if "swap_neurons" in normalized_operations:
-        result["swap_neurons"] = generate_swap_neighbors(layout)
-    return result
-
-
-def _weighted_choice(items, weights: Sequence[float], rng: np.random.Generator):
-    weight_array = np.asarray(weights, dtype=np.float64)
-    if np.any(weight_array < 0.0):
-        raise ValueError("Proposal-Gewichte duerfen nicht negativ sein.")
-    if not np.any(weight_array > 0.0):
-        return items[int(rng.integers(0, len(items)))]
-    probabilities = weight_array / float(np.sum(weight_array))
-    index = int(rng.choice(len(items), p=probabilities))
-    return items[index]
-
-
-def _activation_weight_from_neighbor(
-    neighbor: NeighborResult,
-    activation_probabilities: Mapping[str, float],
-) -> float:
-    if not neighbor.changes:
-        return 0.0
-    after_names = {change.after for change in neighbor.changes}
-    return sum(float(activation_probabilities.get(name, 0.0)) for name in after_names)
-
-
-def _parse_layer_reference(layer_token: str, layout: ActivationLayout) -> int:
-    """Wandelt `L1`, `L2`, ... in den internen Layer-Index um."""
-
-    cleaned = layer_token.strip().upper()
-    if cleaned.startswith("L"):
-        cleaned = cleaned[1:]
-    try:
-        layer_index = int(cleaned) - 1
-    except ValueError as exc:
-        raise ValueError(
-            f"Ungueltige Layer-Referenz '{layer_token}'. Verwende L1, L2, L3, ..."
-        ) from exc
-    _validate_layer_index(layout, layer_index)
-    return layer_index
-
-
 def _validate_layer_index(layout: ActivationLayout, layer_index: int) -> None:
     """Prueft, ob ein Layer-Index im Layout existiert."""
 
@@ -796,80 +613,6 @@ def _validate_position(layout: ActivationLayout, layer_index: int, neuron_index:
         raise ValueError(
             f"Neuron-Index {neuron_index} liegt ausserhalb des Bereichs von L{layer_index + 1}."
         )
-
-
-def _apply_single_neighbor_operation(
-    layout: ActivationLayout, operation: str
-) -> tuple[ActivationLayout, tuple[LayoutChange, ...]]:
-    """Wendet genau eine Neighbor-Operation an."""
-
-    parts = operation.strip().split(":")
-    operator = parts[0].lower()
-
-    if operator == "set" and len(parts) == 4:
-        layer_index = _parse_layer_reference(parts[1], layout)
-        neuron_index = int(parts[2])
-        activation_name = parts[3].lower()
-        validate_activation_name(activation_name)
-        _validate_position(layout, layer_index, neuron_index)
-        before = layout.layers[layer_index][neuron_index]
-        updated_layout = layout.replace_neuron(layer_index, neuron_index, activation_name)
-        changes: tuple[LayoutChange, ...] = ()
-        if before != activation_name:
-            changes = (
-                LayoutChange(layer_index, neuron_index, before, activation_name, operation="set"),
-            )
-        return updated_layout, changes
-
-    if operator == "fill" and len(parts) == 3:
-        layer_index = _parse_layer_reference(parts[1], layout)
-        activation_name = parts[2].lower()
-        validate_activation_name(activation_name)
-        updated_layout = layout.replace_layer(layer_index, activation_name)
-        changes = tuple(
-            LayoutChange(layer_index, neuron_index, before, activation_name, "fill")
-            for neuron_index, before in enumerate(layout.layers[layer_index])
-            if before != activation_name
-        )
-        return updated_layout, changes
-
-    if operator == "cycle" and len(parts) == 3:
-        layer_index = _parse_layer_reference(parts[1], layout)
-        neuron_index = int(parts[2])
-        _validate_position(layout, layer_index, neuron_index)
-        before = layout.layers[layer_index][neuron_index]
-        updated_layout = layout.cycle_neuron(layer_index, neuron_index)
-        after = updated_layout.layers[layer_index][neuron_index]
-        return updated_layout, (
-            LayoutChange(layer_index, neuron_index, before, after, "cycle"),
-        )
-
-    if operator == "swap" and len(parts) == 4:
-        layer_index = _parse_layer_reference(parts[1], layout)
-        first_index = int(parts[2])
-        second_index = int(parts[3])
-        _validate_position(layout, layer_index, first_index)
-        _validate_position(layout, layer_index, second_index)
-        before_first = layout.layers[layer_index][first_index]
-        before_second = layout.layers[layer_index][second_index]
-        updated_layout = layout.swap_neurons(layer_index, first_index, second_index)
-        changes: list[LayoutChange] = []
-        after_first = updated_layout.layers[layer_index][first_index]
-        after_second = updated_layout.layers[layer_index][second_index]
-        if before_first != after_first:
-            changes.append(
-                LayoutChange(layer_index, first_index, before_first, after_first, "swap")
-            )
-        if before_second != after_second:
-            changes.append(
-                LayoutChange(layer_index, second_index, before_second, after_second, "swap")
-            )
-        return updated_layout, tuple(changes)
-
-    raise ValueError(
-        "Nicht unterstuetzte Neighbor-Operation. Beispiele: "
-        "set:L1:0:tanh, fill:L2:sigmoid, cycle:L1:3, swap:L2:0:4"
-    )
 
 
 def _compress_layer(layer: Sequence[str]) -> str:

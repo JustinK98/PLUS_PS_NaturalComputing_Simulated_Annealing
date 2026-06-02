@@ -17,9 +17,7 @@ from annealing import AnnealingConfig, acceptance_probability
 from annealing_schedules import temperature_for_step
 from benchmarks import DatasetBundle, load_benchmark
 from configs import (
-    DEFAULT_ONLINE_TRAIN_POLICY,
     DatasetConfig,
-    SUPPORTED_ONLINE_TRAIN_POLICIES,
     TrainingConfig,
 )
 from model import ModularMLP
@@ -37,14 +35,9 @@ class OnlineAnnealingRequest:
     annealing_config: AnnealingConfig
     weight_scale: float
     random_state: int
-    train_policy: str = DEFAULT_ONLINE_TRAIN_POLICY
+    include_test_metrics: bool = True
 
     def __post_init__(self) -> None:
-        if self.train_policy not in SUPPORTED_ONLINE_TRAIN_POLICIES:
-            raise ValueError(
-                "Unbekannte Online-Trainingspolicy. Erlaubt sind: "
-                + ", ".join(SUPPORTED_ONLINE_TRAIN_POLICIES)
-            )
         if self.weight_scale <= 0.0:
             raise ValueError("weight_scale muss positiv sein.")
 
@@ -406,21 +399,14 @@ def _online_step(session: OnlineAnnealingSession) -> OnlineAnnealingStep:
     neighbors = generate_neighbors(previous_layout, session.request.annealing_config.neighborhood_operations)
     if not neighbors:
         raise ValueError("Fuer das aktuelle Layout wurden keine Nachbarn erzeugt.")
-    if (
-        session.request.annealing_config.operation_probabilities
-        or session.request.annealing_config.activation_probabilities
-    ):
+    if tuple(session.request.annealing_config.neighborhood_operations) == ("set_neuron",):
+        chosen_neighbor = sample_set_neuron_neighbor(previous_layout, session.rng)
+    else:
         chosen_neighbor = sample_neighbor(
             previous_layout,
             session.request.annealing_config.neighborhood_operations,
             session.rng,
-            operation_probabilities=session.request.annealing_config.operation_probabilities,
-            activation_probabilities=session.request.annealing_config.activation_probabilities,
         )
-    elif tuple(session.request.annealing_config.neighborhood_operations) == ("set_neuron",):
-        chosen_neighbor = sample_set_neuron_neighbor(previous_layout, session.rng)
-    else:
-        chosen_neighbor = neighbors[int(session.rng.integers(0, len(neighbors)))]
 
     session.model.set_layout(chosen_neighbor.layout)
     candidate_loss_after, candidate_acc_after = evaluate_batch(session.model, X_batch, y_batch)
@@ -446,21 +432,20 @@ def _online_step(session: OnlineAnnealingSession) -> OnlineAnnealingStep:
         state.accepted_steps += 1
         if delta > 0.0:
             state.accepted_worse_steps += 1
-        trained_after_accept = _should_train_after_accept(session.request.train_policy, delta)
-        if trained_after_accept:
-            train_one_batch(
-                session.model,
-                X_batch,
-                y_batch,
-                session.request.training_config.learning_rate,
-            )
+        trained_after_accept = True
+        train_one_batch(
+            session.model,
+            X_batch,
+            y_batch,
+            session.request.training_config.learning_rate,
+        )
         post_loss, post_acc = evaluate_batch(session.model, X_batch, y_batch)
         current_evaluation = _build_evaluation(
             session,
             session.model.layout,
             batch_loss=post_loss,
             batch_accuracy=post_acc,
-            phase="accepted_after_training" if trained_after_accept else "accepted_no_training",
+            phase="accepted_after_training",
         )
         state.current_evaluation = current_evaluation
         if current_evaluation.val_loss < state.best_evaluation.val_loss:
@@ -514,7 +499,10 @@ def _build_evaluation(
 ) -> OnlineLayoutEvaluation:
     train_loss, train_acc = session.model.evaluate(session.dataset.X_train, session.dataset.y_train)
     val_loss, val_acc = session.model.evaluate(session.dataset.X_val, session.dataset.y_val)
-    test_loss, test_acc = session.model.evaluate(session.dataset.X_test, session.dataset.y_test)
+    if session.request.include_test_metrics:
+        test_loss, test_acc = session.model.evaluate(session.dataset.X_test, session.dataset.y_test)
+    else:
+        test_loss, test_acc = float("nan"), float("nan")
     return OnlineLayoutEvaluation(
         layout=layout,
         comparable_score=float(batch_loss),
@@ -539,14 +527,6 @@ def _build_evaluation(
 def _current_batch(session: OnlineAnnealingSession) -> tuple[np.ndarray, np.ndarray]:
     indices = session.batch_cursor.current_indices()
     return session.dataset.X_train[indices], session.dataset.y_train[indices]
-
-
-def _should_train_after_accept(policy: str, delta: float) -> bool:
-    if policy == "none":
-        return False
-    if policy == "improved_only":
-        return delta <= 0.0
-    return True
 
 
 def _temperature_for_iteration(session: OnlineAnnealingSession, iteration_index: int) -> float:

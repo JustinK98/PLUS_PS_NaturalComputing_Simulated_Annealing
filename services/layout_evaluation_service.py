@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
-from pathlib import Path
 
 import numpy as np
 
-from activations import parse_layout_spec
+from activations import parse_layout_spec, random_layout_spec
 from benchmarks import load_benchmark
 from configs import DatasetConfig, TrainingConfig, SUPPORTED_ACTIVATIONS
 from model import ModularMLP
@@ -71,6 +69,7 @@ class LayoutEvaluationRequest:
     training_config: TrainingConfig
     weight_scale: float
     primary_metric: str = "validation_loss"
+    include_test_metrics: bool = True
 
 
 @dataclass(frozen=True)
@@ -82,16 +81,6 @@ class LayoutEvaluationResult:
     ranking: tuple[AggregatedLayoutEvaluation, ...]
     inherited_runs: tuple[LayoutEvaluationRun, ...] = ()
     combined_ranking: tuple[AggregatedLayoutEvaluation, ...] = ()
-
-
-STANDARD_NEIGHBORHOOD_SETS: dict[str, tuple[str, ...]] = {
-    "set_neuron": ("set_neuron",),
-    "swap_neurons": ("swap_neurons",),
-    "fill_layer": ("fill_layer",),
-    "set_neuron_swap_neurons": ("set_neuron", "swap_neurons"),
-    "set_neuron_fill_layer": ("set_neuron", "fill_layer"),
-    "all_operations": ("set_neuron", "fill_layer", "swap_neurons"),
-}
 
 
 def build_standard_layout_candidates(
@@ -112,47 +101,12 @@ def build_standard_layout_candidates(
     candidates.append(
         LayoutCandidate(
             "random_layout",
-            _random_layout_spec(hidden_sizes, random_state=random_state),
+            random_layout_spec(hidden_sizes, random_state),
         )
     )
     for activation_name in SUPPORTED_ACTIVATIONS:
         candidates.append(LayoutCandidate(f"all_{activation_name}", activation_name))
     return _deduplicate_candidates(tuple(candidates))
-
-
-def build_layout_grid_candidates(
-    hidden_sizes: tuple[int, ...],
-    *,
-    activations: tuple[str, ...] = SUPPORTED_ACTIVATIONS,
-    include_mixed: bool = True,
-    max_candidates: int | None = None,
-) -> tuple[LayoutCandidate, ...]:
-    """Erzeugt ein kleines, reproduzierbares Layout-Grid fuer Vortraining."""
-
-    candidates: list[LayoutCandidate] = []
-    for activation_name in activations:
-        candidates.append(LayoutCandidate(f"all_{activation_name}", activation_name))
-
-    if len(hidden_sizes) > 1:
-        for layer_activations in _cartesian_product(activations, len(hidden_sizes)):
-            layout_spec = "|".join(layer_activations)
-            label = "layers_" + "_".join(layer_activations)
-            candidates.append(LayoutCandidate(label, layout_spec))
-
-    if include_mixed:
-        for left_index, left_activation in enumerate(activations):
-            for right_activation in activations[left_index + 1 :]:
-                layers = [
-                    _mixed_layer_spec(layer_size, left_activation, right_activation)
-                    for layer_size in hidden_sizes
-                ]
-                label = f"mixed_{left_activation}_{right_activation}"
-                candidates.append(LayoutCandidate(label, "|".join(layers)))
-
-    unique_candidates = _deduplicate_layout_specs(tuple(candidates))
-    if max_candidates is not None:
-        return unique_candidates[: max(1, int(max_candidates))]
-    return unique_candidates
 
 
 def run_layout_evaluation(request: LayoutEvaluationRequest) -> LayoutEvaluationResult:
@@ -193,20 +147,31 @@ def run_layout_evaluation(request: LayoutEvaluationRequest) -> LayoutEvaluationR
                 random_state=int(seed),
                 shuffle=request.training_config.shuffle,
             )
-            training_result = train_model(model, dataset, training_config)
+            training_result = train_model(
+                model,
+                dataset,
+                training_config,
+                include_test_metrics=request.include_test_metrics,
+            )
+            metrics = {
+                "train_loss": float(training_result.history["train_loss"][-1]),
+                "val_loss": float(training_result.history["val_loss"][-1]),
+                "train_accuracy": float(training_result.history["train_acc"][-1]),
+                "val_accuracy": float(training_result.history["val_acc"][-1]),
+            }
+            if request.include_test_metrics:
+                metrics.update(
+                    {
+                        "test_loss": float(training_result.test_metrics["loss"]),
+                        "test_accuracy": float(training_result.test_metrics["accuracy"]),
+                    }
+                )
             runs.append(
                 LayoutEvaluationRun(
                     label=candidate.label,
                     layout_spec=layout.to_compact_spec(),
                     seed=int(seed),
-                    metrics={
-                        "train_loss": float(training_result.history["train_loss"][-1]),
-                        "val_loss": float(training_result.history["val_loss"][-1]),
-                        "test_loss": float(training_result.test_metrics["loss"]),
-                        "train_accuracy": float(training_result.history["train_acc"][-1]),
-                        "val_accuracy": float(training_result.history["val_acc"][-1]),
-                        "test_accuracy": float(training_result.test_metrics["accuracy"]),
-                    },
+                    metrics=metrics,
                     history=training_result.history,
                     model_state=model.to_state_dict(),
                 )
@@ -227,6 +192,7 @@ def evaluate_inherited_models(
     candidates: tuple[InheritedModelCandidate, ...],
     *,
     primary_metric: str = "validation_loss",
+    include_test_metrics: bool = True,
 ) -> tuple[LayoutEvaluationRun, ...]:
     """Evaluiert geerbte Modellzustaende ohne weiteres Training."""
 
@@ -249,7 +215,11 @@ def evaluate_inherited_models(
                 label=candidate.label,
                 layout_spec=model.layout.to_compact_spec(),
                 seed=int(candidate.seed),
-                metrics=_evaluate_model_metrics(model, dataset),
+                metrics=_evaluate_model_metrics(
+                    model,
+                    dataset,
+                    include_test_metrics=include_test_metrics,
+                ),
                 history={},
                 model_state=model.to_state_dict(),
                 evaluation_type="inherited",
@@ -373,45 +343,6 @@ def best_layout_run(result: LayoutEvaluationResult, primary_metric: str) -> Layo
     raise ValueError("primary_metric muss validation_loss oder validation_accuracy sein.")
 
 
-def save_layout_grid_result(
-    path: str | Path,
-    *,
-    request: LayoutEvaluationRequest,
-    result: LayoutEvaluationResult,
-) -> Path:
-    """Speichert ein Layout-Grid inklusive bestem vortrainiertem Modell."""
-
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    best_run = best_layout_run(result, request.primary_metric)
-    payload = {
-        "kind": "layout_grid",
-        "benchmark": request.dataset_config.name,
-        "hidden_sizes": list(request.hidden_sizes),
-        "seeds": list(request.seeds),
-        "primary_metric": request.primary_metric,
-        "training": {
-            "epochs": request.training_config.epochs,
-            "learning_rate": request.training_config.learning_rate,
-            "batch_size": request.training_config.batch_size,
-            "shuffle": request.training_config.shuffle,
-            "weight_scale": request.weight_scale,
-        },
-        "candidate_count": len(request.candidates),
-        "best_run": {
-            "label": best_run.label,
-            "layout_spec": best_run.layout_spec,
-            "seed": best_run.seed,
-            "metrics": best_run.metrics,
-            "history": best_run.history,
-            "model_state": best_run.model_state,
-        },
-        "result": layout_evaluation_to_dict(result),
-    }
-    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    return output_path
-
-
 def _aggregate_runs(
     runs: tuple[LayoutEvaluationRun, ...],
     primary_metric: str,
@@ -453,42 +384,29 @@ def _aggregate_runs(
     return tuple(aggregated)
 
 
-def _evaluate_model_metrics(model: ModularMLP, dataset) -> dict[str, float]:
+def _evaluate_model_metrics(
+    model: ModularMLP,
+    dataset,
+    *,
+    include_test_metrics: bool,
+) -> dict[str, float]:
     train_loss, train_accuracy = model.evaluate(dataset.X_train, dataset.y_train)
     val_loss, val_accuracy = model.evaluate(dataset.X_val, dataset.y_val)
-    test_loss, test_accuracy = model.evaluate(dataset.X_test, dataset.y_test)
-    return {
+    metrics = {
         "train_loss": float(train_loss),
         "val_loss": float(val_loss),
-        "test_loss": float(test_loss),
         "train_accuracy": float(train_accuracy),
         "val_accuracy": float(val_accuracy),
-        "test_accuracy": float(test_accuracy),
     }
-
-
-def _random_layout_spec(hidden_sizes: tuple[int, ...], random_state: int) -> str:
-    rng = np.random.default_rng(random_state)
-    layers: list[str] = []
-    for layer_size in hidden_sizes:
-        layer = rng.choice(SUPPORTED_ACTIVATIONS, size=layer_size, replace=True)
-        layers.append(",".join(str(name) for name in layer))
-    return "|".join(layers)
-
-
-def _mixed_layer_spec(layer_size: int, left_activation: str, right_activation: str) -> str:
-    left_count = layer_size // 2
-    right_count = layer_size - left_count
-    return ",".join([left_activation] * left_count + [right_activation] * right_count)
-
-
-def _cartesian_product(values: tuple[str, ...], length: int) -> tuple[tuple[str, ...], ...]:
-    if length <= 0:
-        return ((),)
-    result: list[tuple[str, ...]] = [()]
-    for _ in range(length):
-        result = [prefix + (value,) for prefix in result for value in values]
-    return tuple(result)
+    if include_test_metrics:
+        test_loss, test_accuracy = model.evaluate(dataset.X_test, dataset.y_test)
+        metrics.update(
+            {
+                "test_loss": float(test_loss),
+                "test_accuracy": float(test_accuracy),
+            }
+        )
+    return metrics
 
 
 def _deduplicate_candidates(candidates: tuple[LayoutCandidate, ...]) -> tuple[LayoutCandidate, ...]:
@@ -498,16 +416,5 @@ def _deduplicate_candidates(candidates: tuple[LayoutCandidate, ...]) -> tuple[La
         if candidate.label in seen:
             continue
         seen.add(candidate.label)
-        result.append(candidate)
-    return tuple(result)
-
-
-def _deduplicate_layout_specs(candidates: tuple[LayoutCandidate, ...]) -> tuple[LayoutCandidate, ...]:
-    seen: set[str] = set()
-    result: list[LayoutCandidate] = []
-    for candidate in candidates:
-        if candidate.layout_spec in seen:
-            continue
-        seen.add(candidate.layout_spec)
         result.append(candidate)
     return tuple(result)

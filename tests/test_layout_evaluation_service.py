@@ -7,7 +7,6 @@ from services.layout_evaluation_service import (
     InheritedModelCandidate,
     LayoutEvaluationRequest,
     best_layout_run,
-    build_layout_grid_candidates,
     build_standard_layout_candidates,
     evaluate_inherited_models,
     run_layout_evaluation,
@@ -107,13 +106,29 @@ class LayoutEvaluationServiceTests(unittest.TestCase):
             min(item.ranking_score for item in combined.combined_ranking),
         )
 
-    def test_layout_grid_candidates_are_reproducible_and_bounded(self) -> None:
-        candidates = build_layout_grid_candidates((8,), max_candidates=5)
+    def test_layout_evaluation_can_skip_test_metrics(self) -> None:
+        result = run_layout_evaluation(
+            LayoutEvaluationRequest(
+                dataset_config=DatasetConfig(name="two_moons", random_state=3),
+                hidden_sizes=(8,),
+                candidates=build_standard_layout_candidates(
+                    (8,),
+                    start_layout_spec="relu",
+                )[:1],
+                seeds=(3,),
+                training_config=TrainingConfig(
+                    epochs=1,
+                    learning_rate=0.03,
+                    batch_size=32,
+                    random_state=3,
+                ),
+                weight_scale=1.0,
+                include_test_metrics=False,
+            )
+        )
 
-        self.assertEqual(len(candidates), 5)
-        self.assertEqual(candidates[0].label, "all_relu")
-        self.assertEqual(candidates[0].layout_spec, "relu")
-
+        self.assertNotIn("test_loss", result.runs[0].metrics)
+        self.assertNotIn("test_accuracy", result.runs[0].metrics)
 
 if __name__ == "__main__":
     unittest.main()

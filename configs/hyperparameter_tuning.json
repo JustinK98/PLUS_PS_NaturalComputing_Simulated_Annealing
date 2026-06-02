@@ -1,0 +1,48 @@
+{
+  "profiles": {
+    "overnight": {
+      "training_screen_runs": 5,
+      "training_refine_runs": 5,
+      "training_refine_confirmation_runs": 10,
+      "training_refine_top_screen": 3,
+      "training_refine_top_confirmation": 5,
+      "delta_probe_runs": 10,
+      "delta_probe_steps": 240,
+      "sa_screen_runs": 5,
+      "sa_refine_runs": 10,
+      "sa_refine_top": 12,
+      "confirmation_runs": 30,
+      "target_worse_acceptance_rates": [0.2, 0.4, 0.6, 0.8],
+      "batch_sizes": [8, 16, 32, 64, 128],
+      "weight_scales": [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
+      "cooling_parameters": [0.9, 0.95, 0.98, 0.995],
+      "iterations_per_temperature": [1, 5, 10],
+      "online_learning_rate_factors": [0.25, 0.5, 1.0, 2.0],
+      "online_batch_sizes": [8, 16, 32, 64, 128],
+      "benchmarks": {
+        "two_moons": {
+          "learning_rates": [0.03, 0.05, 0.075, 0.1, 0.15, 0.2],
+          "epochs": [100, 200, 300, 400],
+          "max_steps": [120, 240, 480],
+          "sa_screen_candidates": 96
+        },
+        "concentric_circles": {
+          "learning_rates": [0.01, 0.02, 0.03, 0.05, 0.075, 0.1],
+          "epochs": [100, 150, 200, 300, 400],
+          "max_steps": [120, 240, 480],
+          "sa_screen_candidates": 96
+        },
+        "crossing_spirals": {
+          "learning_rates": [0.001, 0.003, 0.01, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2],
+          "epochs": [250, 500, 750, 1000, 1500],
+          "max_steps": [120, 240, 480, 960],
+          "sa_screen_candidates": 160,
+          "stop_rule": {
+            "max_mean_val_loss": 0.65,
+            "min_mean_val_accuracy": 0.6
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,227 +1,123 @@
 # Architecture Overview
 
-This repository is now a Qt-only desktop application with a thin CLI layer and a shared service boundary.
+## Product Boundary
 
-## 1. High-Level Shape
+The repository exposes two intentional entry paths:
 
-The codebase is split into four practical layers:
+```text
+CLI = reproducible scientific experiments
+GUI = focused Online-Delta demonstration
+```
 
-- `cli/`
-  - command parsing
-  - interactive assistant
-  - headless command handlers
-- `ui_qt/`
-  - Qt application shell
-  - workspaces
-  - reusable widgets
-  - Qt-specific background task handling
-- `services/`
-  - GUI-neutral orchestration
-  - didactic payload builders
-  - session abstractions for training and simulated annealing
-- core modules
-  - benchmarks
-  - activation layouts
-  - MLP model
-  - trainer
-  - simulated annealing
-  - experiment execution and storage
+`main.py` prints help when invoked without arguments. It does not start an
+interactive assistant.
 
-## 2. Current Entry Paths
+## Public Commands
 
-### Main Entry
+```bash
+python main.py run ...
+python main.py gui ...
+python main.py experiment suite ...
+python main.py experiment tune ...
+python main.py experiment report-online-delta ...
+```
 
-- `main.py`
-  - builds the parser
-  - resolves a command
-  - dispatches to CLI or Qt GUI
+The official suite types are:
 
-### GUI Entry
+```text
+online-delta
+random-baseline
+all-baseline
+```
 
-- `python main.py gui --mode activation_workflow`
-- `python main.py gui --mode experiment_builder`
+`swap-ablation` is an explicitly optional comparison. It is not part of the main
+claim.
 
-Qt startup lives in:
+Normal suites are validation-only. Passing an explicit versioned
+`--evaluation-profile` marks a final reporting run and unlocks held-out test
+metrics.
+
+## Active Core
+
+| Area | Files |
+| --- | --- |
+| Benchmark registry and loading | `benchmark_registry.py`, `benchmarks.py` |
+| Activation layouts and sampling | `activations.py` |
+| MLP and SGD training | `model.py`, `trainer.py` |
+| Online-Delta session | `services/online_annealing_training_service.py` |
+| Official experiment suites | `services/experiment_suite_service.py` |
+| Staged tuning | `services/hyperparameter_tuning_service.py` |
+| Fixed evaluation profiles | `services/evaluation_profile_service.py`, `configs/evaluation_profiles.json` |
+| Online-Delta reports | `services/online_delta_reporting_service.py` |
+| Layout visualization | `services/layout_visualization_service.py` |
+
+## Online-Delta Data Flow
+
+1. Load one official binary benchmark.
+2. Use its fixed Basics topology.
+3. Generate a random mixed hidden-neuron activation layout.
+4. Initialize Xavier weights and zero biases.
+5. Select one hidden neuron uniformly.
+6. Replace its activation with a different Basics activation.
+7. Evaluate candidate and current state with the same weights and mini-batch.
+8. Accept improvements and apply temperature-based SA acceptance to worse moves.
+9. Continue mini-batch training after accepted candidate steps.
+10. Retrain start, best, and end layouts from scratch for final comparison.
+
+## GUI
+
+The public GUI contains one `activation_workflow` workspace. It is intended for
+interactive explanation of Online-Delta behavior. Multi-run evidence belongs to
+the CLI suites. The selected benchmark determines the fixed Basics topology;
+the GUI no longer exposes workspace routing or topology overrides.
+
+The German-language workspace exposes `demo` and `tuned_20260530` parameter
+profiles, a side-by-side network comparison, and an in-memory SA timeline.
+Accepted candidate changes are outlined in green and rejected changes in red.
+The Timeline detail box replaces the former separate SA delta and decision
+panels. Language selection, expert mode, the short GUI guide, `fill_layer`,
+short-retrain controls, and Builder routing are not part of the visible GUI.
+
+Qt startup:
 
 - `ui_qt/app.py`
 - `ui_qt/shell/main_window.py`
-
-### CLI Entry
-
-- `python main.py run ...`
-- `python main.py experiment run ...`
-- `python main.py experiment analyze ...`
-- `python main.py experiment template ...`
-
-## 3. Core Model and Training
-
-- `benchmarks.py`
-  - dataset loading
-  - scaling
-  - train / validation / test split
-  - target names
-
-- `activations.py`
-  - activation functions and derivatives
-  - layout parsing
-  - layout editing helpers
-  - neighborhood operations
-
-- `model.py`
-  - `ModularMLP`
-  - forward pass
-  - loss and gradients
-  - tracing and neuron inspection
-  - model state serialization
-
-- `trainer.py`
-  - mini-batch training loop
-  - history collection
-  - epoch streaming hooks used by the Qt training session path
-
-## 4. Simulated Annealing
-
-- `annealing.py`
-  - SA dataclasses and acceptance logic
-
-- `annealing_schedules.py`
-  - cooling schedules
-
-- `annealing_objectives.py`
-  - legacy candidate evaluation after short training
-
-- `annealing_runner.py`
-  - legacy short-retrain SA runs
-
-- `services/annealing_service.py`
-  - legacy short-retrain annealing execution
-
-- `services/annealing_session_service.py`
-  - legacy short-retrain stepwise SA session snapshots
-
-- `services/online_annealing_training_service.py`
-  - default online-delta SA mode
-  - measures candidate AF changes on the same weights and same mini-batch
-  - trains only after the SA decision
-
-## 5. Experiment System
-
-- `experiment_builder.py`
-  - experiment and run definitions
-
-- `search_spaces.py`
-  - fixed / list / range search spaces
-  - grid and random search expansion
-
-- `experiment_runner.py`
-  - experiment execution over configurations and seeds
-
-- `results_store.py`
-  - manifest / summary / per-run JSON storage
-
-- `results_analysis.py`
-  - aggregation and ranking
-
-- `services/experiment_service.py`
-  - GUI- and CLI-friendly experiment load/save/run helpers
-
-- `services/preview_service.py`
-  - summary formatting helpers
-
-## 6. Qt UI Layer
-
-### Shell
-
-- `ui_qt/shell/main_window.py`
-  - top-level workspace router
-  - language / detail controls
-  - global handbook window
-
-### Workspaces
-
 - `ui_qt/workspaces/activation_workflow_workspace.py`
-  - primary GUI workflow
-  - benchmark and layout editing
-  - sample inspection, network view, neuron tracker, and stepper
-  - manual training
-  - online-delta SA search and legacy short-retrain comparison mode
-  - final layout comparison
 
-- `ui_qt/workspaces/experiment_builder_workspace.py`
-  - experiment definition editing
-  - results loading
-  - run table
-  - per-run preview
+## Removed Legacy Paths
 
-### Shared Widgets
+The historical Interactive Assistant, Experiment Builder, short-retrain runner,
+layout-grid command, old report builder, recipe UI, and their dedicated tests
+have been removed after import review. The core SA implementation now supports
+`set_neuron` and the explicit `swap-ablation`; `fill_layer` and weighted
+candidate-operation selection are no longer runtime mechanisms.
 
-- `ui_qt/widgets/network_view.py`
-- `ui_qt/widgets/sample_panel.py`
-- `ui_qt/widgets/neuron_detail_panel.py`
-- `ui_qt/widgets/activation_curve_widget.py`
-- `ui_qt/widgets/stepper_panel.py`
-- `ui_qt/widgets/annealing_*_panel.py`
-- `ui_qt/widgets/help_dialog.py`
-- `ui_qt/widgets/info_button.py`
+## Generated Artifacts
 
-### Qt Tasking
+Normal Online-Delta suites retain compact histories and plots. Per-step PNG frame
+series are opt-in:
 
-- `ui_qt/tasking.py`
-  - Qt thread-pool based background execution for UI actions
+```bash
+python main.py experiment suite --exp online-delta --benchmark two_moons --export-layout-frames
+```
 
-## 7. Service Layer Responsibilities
+Cleanup retention rules live in `configs/artifact_retention.json`. The
+non-destructive inventory command is:
 
-The service layer is the application boundary. Qt widgets should render service output, not reimplement domain logic.
+```bash
+python scripts/cleanup_inventory.py
+```
 
-Important services:
+The separate apply script remains a dry run unless both `--apply` and its
+explicit confirmation token are passed:
 
-- `services/analysis_sample_service.py`
-  - benchmark-specific sample payloads
+```bash
+python scripts/apply_cleanup_inventory.py
+```
 
-- `services/network_projection_service.py`
-  - reduced network projection for readable visualization
+## Verification
 
-- `services/neuron_analysis_service.py`
-  - neuron tracker payloads
-
-- `services/stepper_service.py`
-  - forward/backward teaching entries
-
-- `services/help_service.py`
-  - handbook, workspace help, and field-level didactic content
-
-- `services/training_service.py`
-  - single-run training from CLI or services
-
-## 8. Data Flow
-
-### Activation Workflow
-
-1. load benchmark
-2. build activation layout
-3. build preview model
-4. inspect one sample through service payloads
-5. train in chunks
-6. optionally run online-delta SA over AF layouts
-7. compare start, best, end, random, and homogeneous baselines under identical final training conditions
-
-### Experiment Builder
-
-1. build experiment definition
-2. run experiment headless or load stored results
-3. aggregate summary
-4. render run table, detail view, and network preview
-
-## 9. Test Strategy
-
-The current test suite is intentionally conservative:
-
-- parser and CLI smoke tests
-- service tests
-- Qt widget tests for key didactic panels
-- Qt smoke tests for active workspaces
-
-The repo should be kept green with:
-
-- `python -m pytest tests -q`
-- offscreen Qt launch smokes for both active workspaces
+```bash
+python -m pytest tests -q
+git diff --check
+```

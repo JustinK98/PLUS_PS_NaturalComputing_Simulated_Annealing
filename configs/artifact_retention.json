@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "description": "Conservative retention rules for local generated artifacts. Rules are evaluated from top to bottom. Unknown files always require manual review.",
+  "output_root": "outputs",
+  "default_category": "manual_review",
+  "categories": {
+    "keep": "Retain locally because the artifact is part of the compact reviewed evaluation snapshot.",
+    "archive": "Preserve only as historical context. Move to external or explicit archive storage after review.",
+    "delete": "Regenerable, temporary, or obsolete local artifact. Safe deletion candidate after explicit approval.",
+    "manual_review": "No automatic action. Inspect before deciding whether to retain, archive, or delete."
+  },
+  "rules": [
+    {
+      "pattern": "**/.DS_Store",
+      "category": "delete",
+      "reason": "macOS metadata is not a project artifact."
+    },
+    {
+      "pattern": ".DS_Store",
+      "category": "delete",
+      "reason": "macOS metadata is not a project artifact."
+    },
+    {
+      "pattern": "hyperparameter_tuning/20260530_143043_overnight/confirmation/*/online_delta/layout_frames/**",
+      "category": "delete",
+      "reason": "Per-step PNG frames are regenerable from retained Online-Delta JSON histories."
+    },
+    {
+      "pattern": "hyperparameter_tuning/20260530_143043_overnight/confirmation/*/online_delta/plots_single/seed_0000_layout_summary.png",
+      "category": "keep",
+      "reason": "Retain one representative start/best/end layout visualization per benchmark."
+    },
+    {
+      "pattern": "hyperparameter_tuning/20260530_143043_overnight/confirmation/*/online_delta/plots_single/seed_0000_accepted_timeline.png",
+      "category": "keep",
+      "reason": "Retain one representative accepted-change timeline per benchmark."
+    },
+    {
+      "pattern": "hyperparameter_tuning/20260530_143043_overnight/confirmation/*/online_delta/plots_single/**",
+      "category": "delete",
+      "reason": "Per-run PNG plots are regenerable; only one representative plot pair per benchmark is retained."
+    },
+    {
+      "pattern": "hyperparameter_tuning/20260530_143043_overnight/manifest.json",
+      "category": "keep",
+      "reason": "Retain the reviewed tuning run manifest as the entry point for reproducibility."
+    },
+    {
+      "pattern": "hyperparameter_tuning/20260530_143043_overnight/**/*.json",
+      "category": "keep",
+      "reason": "Retain reviewed tuning configuration, selected parameters, and Online-Delta histories for reproducibility."
+    },
+    {
+      "pattern": "hyperparameter_tuning/20260530_143043_overnight/**/*.csv",
+      "category": "keep",
+      "reason": "Retain compact tuning tables, summaries, and aggregate statistics for reproducibility."
+    },
+    {
+      "pattern": "hyperparameter_tuning/20260530_143043_overnight/**/aggregate/*.png",
+      "category": "keep",
+      "reason": "Retain aggregate plots used by the reviewed evaluation report."
+    },
+    {
+      "pattern": "hyperparameter_tuning/20260530_143043_overnight/**/*.png",
+      "category": "delete",
+      "reason": "Remaining tuning PNGs are regenerable and not needed in the compact reviewed snapshot."
+    },
+    {
+      "pattern": "experiment_suites/*propose*/**",
+      "category": "archive",
+      "reason": "Historical pre-Mayer candidate-selection terminology. Preserve only if historical comparison is required."
+    },
+    {
+      "pattern": "experiment_suites/**",
+      "category": "archive",
+      "reason": "Reviewed pre-profile suite results are historical calibration artifacts. Current documentation uses only the promoted overnight tuning snapshot."
+    },
+    {
+      "pattern": "backend_regression/**",
+      "category": "delete",
+      "reason": "Regenerable regression-test output."
+    },
+    {
+      "pattern": "experiments_test/**",
+      "category": "delete",
+      "reason": "Regenerable test output."
+    },
+    {
+      "pattern": "experiments_test_preview/**",
+      "category": "delete",
+      "reason": "Regenerable preview-test output."
+    },
+    {
+      "pattern": "gui_smoke/**",
+      "category": "delete",
+      "reason": "Regenerable GUI smoke-test output."
+    },
+    {
+      "pattern": "gui_regression/**",
+      "category": "delete",
+      "reason": "Regenerable GUI regression-test output."
+    },
+    {
+      "pattern": "gui_builder_preview/**",
+      "category": "delete",
+      "reason": "Regenerable legacy Experiment Builder preview output."
+    },
+    {
+      "pattern": "gui_builder_preview_debug/**",
+      "category": "delete",
+      "reason": "Regenerable legacy Experiment Builder debug output."
+    },
+    {
+      "pattern": "demo/**",
+      "category": "archive",
+      "reason": "Historical demonstration output outside the official Online-Delta evaluation path."
+    },
+    {
+      "pattern": "demo_sa/**",
+      "category": "archive",
+      "reason": "Historical SA demo output outside the official Online-Delta evaluation path."
+    },
+    {
+      "pattern": "layout_grids/**",
+      "category": "archive",
+      "reason": "Historical layout-grid output from a deprecated public experiment path."
+    },
+    {
+      "pattern": "neighborhood_grids/**",
+      "category": "archive",
+      "reason": "Historical neighborhood-grid output from a deprecated public experiment path."
+    },
+    {
+      "pattern": "report_assets/**",
+      "category": "archive",
+      "reason": "Historical report assets generated by the deprecated demo reporting path."
+    },
+    {
+      "pattern": "manual-*/**",
+      "category": "archive",
+      "reason": "Historical manually assembled presentation and experiment artifacts."
+    },
+    {
+      "pattern": "colleague_pdf_pages/**",
+      "category": "delete",
+      "reason": "Regenerable rendered presentation preview pages."
+    },
+    {
+      "pattern": "*.png",
+      "category": "delete",
+      "reason": "Loose root-level PNGs under outputs are local previews or smoke artifacts."
+    },
+    {
+      "pattern": "experiments/**",
+      "category": "archive",
+      "reason": "Reviewed legacy Experiment Builder outputs are outside the official CLI and GUI paths and are retained only as historical context."
+    }
+  ]
+}

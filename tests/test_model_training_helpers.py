@@ -6,9 +6,9 @@ import numpy as np
 
 from activations import parse_layout_spec
 from benchmarks import load_benchmark
-from configs import DatasetConfig
+from configs import DatasetConfig, TrainingConfig
 from model import ModularMLP
-from trainer import evaluate_batch, train_one_batch
+from trainer import evaluate_batch, train_model, train_one_batch
 
 
 class ModelTrainingHelperTests(unittest.TestCase):
@@ -59,6 +59,17 @@ class ModelTrainingHelperTests(unittest.TestCase):
                 for before, after in zip(before_weights, model.weights, strict=True)
             )
         )
+
+    def test_training_can_skip_final_test_metrics(self) -> None:
+        dataset = load_benchmark(DatasetConfig(name="concentric_circles", random_state=6))
+        result = train_model(
+            self._model(),
+            dataset,
+            TrainingConfig(epochs=1, learning_rate=0.03, batch_size=32, random_state=6),
+            include_test_metrics=False,
+        )
+
+        self.assertEqual(result.test_metrics, {})
 
 
 if __name__ == "__main__":

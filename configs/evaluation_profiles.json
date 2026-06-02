@@ -1,0 +1,102 @@
+{
+  "default_profile": "tuned_20260530",
+  "profiles": {
+    "tuned_20260530": {
+      "description": "Validation-selected evaluation parameters from the staged overnight tuning pipeline.",
+      "source_artifact": "outputs/hyperparameter_tuning/20260530_143043_overnight",
+      "status": "evaluation_fixed",
+      "benchmarks": {
+        "two_moons": {
+          "training": {
+            "learning_rate": 0.2,
+            "epochs": 400,
+            "batch_size": 64,
+            "weight_scale": 2.0
+          },
+          "online_delta": {
+            "start_temperature": 0.024243546321383213,
+            "cooling_parameter": 0.9,
+            "iterations_per_temperature": 10,
+            "max_steps": 480,
+            "min_temperature": 0.0,
+            "online_learning_rate": 0.4,
+            "online_batch_size": 16
+          },
+          "confirmation": {
+            "runs": 30,
+            "acceptance_rate": 0.5055555555555555,
+            "best_layout_retrained_mean_val_loss": 0.08893201949214245,
+            "best_layout_retrained_mean_test_loss": 0.03822593037736225,
+            "best_layout_retrained_mean_test_accuracy": 0.9898333333333331,
+            "paired_mean_val_loss_improvement": 0.0017843953957910829,
+            "paired_win_rate": 0.5333333333333333,
+            "random_baseline_mean_val_loss": 0.09071641488793356,
+            "best_homogeneous_layout": "all_gelu",
+            "best_homogeneous_mean_val_loss": 0.08390837760319231,
+            "interpretation": "Online-Delta is healthy but only slightly improves the matched random baseline. all_gelu remains stronger."
+          }
+        },
+        "concentric_circles": {
+          "training": {
+            "learning_rate": 0.02,
+            "epochs": 400,
+            "batch_size": 16,
+            "weight_scale": 0.5
+          },
+          "online_delta": {
+            "start_temperature": 0.0005409641787374216,
+            "cooling_parameter": 0.9,
+            "iterations_per_temperature": 10,
+            "max_steps": 480,
+            "min_temperature": 0.0,
+            "online_learning_rate": 0.04,
+            "online_batch_size": 128
+          },
+          "confirmation": {
+            "runs": 30,
+            "acceptance_rate": 0.30645833333333333,
+            "best_layout_retrained_mean_val_loss": 0.029534338746527257,
+            "best_layout_retrained_mean_test_loss": 0.02724331691442262,
+            "best_layout_retrained_mean_test_accuracy": 0.9866666666666665,
+            "paired_mean_val_loss_improvement": 0.00007619096909615234,
+            "paired_win_rate": 0.5333333333333333,
+            "random_baseline_mean_val_loss": 0.029610529715623404,
+            "best_homogeneous_layout": "all_swish",
+            "best_homogeneous_mean_val_loss": 0.026634126319449385,
+            "interpretation": "Online-Delta is healthy but effectively neutral on the saturated benchmark. all_swish remains stronger."
+          }
+        },
+        "crossing_spirals": {
+          "training": {
+            "learning_rate": 0.1,
+            "epochs": 1500,
+            "batch_size": 8,
+            "weight_scale": 0.75
+          },
+          "online_delta": {
+            "start_temperature": 0.002464043181734257,
+            "cooling_parameter": 0.98,
+            "iterations_per_temperature": 10,
+            "max_steps": 480,
+            "min_temperature": 0.0,
+            "online_learning_rate": 0.025,
+            "online_batch_size": 16
+          },
+          "confirmation": {
+            "runs": 30,
+            "acceptance_rate": 0.6793055555555557,
+            "best_layout_retrained_mean_val_loss": 0.7073802223099176,
+            "best_layout_retrained_mean_test_loss": 0.6316592332049709,
+            "best_layout_retrained_mean_test_accuracy": 0.7611666666666668,
+            "paired_mean_val_loss_improvement": -0.04512403554806409,
+            "paired_win_rate": 0.43333333333333335,
+            "random_baseline_mean_val_loss": 0.6622561867618535,
+            "best_homogeneous_layout": "all_relu",
+            "best_homogeneous_mean_val_loss": 0.6382065345627925,
+            "interpretation": "The tuned SGD setup learns the benchmark, but Online-Delta degrades the matched random baseline. Do not claim a positive SA result."
+          }
+        }
+      }
+    }
+  }
+}

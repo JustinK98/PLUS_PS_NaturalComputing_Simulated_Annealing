@@ -15,7 +15,7 @@ matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 import numpy as np
 
-from activations import parse_layout_spec
+from activations import parse_layout_spec, random_layout_spec
 from annealing import AnnealingConfig
 from benchmark_registry import benchmark_spec
 from benchmarks import load_benchmark
@@ -38,12 +38,14 @@ from configs import (
     default_hidden_sizes,
 )
 from model import ModularMLP
+from services.evaluation_profile_service import load_evaluation_benchmark_profile
 from services.layout_evaluation_service import (
     LayoutCandidate,
     LayoutEvaluationRequest,
     layout_evaluation_to_dict,
     run_layout_evaluation,
 )
+from services.layout_visualization_service import write_online_delta_layout_artifacts
 from services.online_annealing_training_service import (
     OnlineAnnealingRequest,
     OnlineAnnealingSnapshot,
@@ -64,7 +66,6 @@ class ExperimentSuiteRequest:
     exp: str
     benchmark: str
     learning_rate_preset: int
-    seeds: tuple[int, ...] | None = None
     run_count: int | None = None
     epochs: int | None = None
     max_steps: int | None = None
@@ -72,8 +73,14 @@ class ExperimentSuiteRequest:
     cooling_parameter: float | None = None
     iterations_per_temperature: int | None = None
     min_temperature: float | None = None
+    batch_size: int | None = None
+    weight_scale: float | None = None
+    online_learning_rate: float | None = None
+    online_batch_size: int | None = None
+    evaluation_profile: str | None = None
     output_root: Path = OUTPUT_DIR / "experiment_suites"
     no_plots: bool = False
+    export_layout_frames: bool = False
 
 
 @dataclass(frozen=True)
@@ -97,15 +104,56 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
 
     spec = benchmark_spec(request.benchmark)
     hidden_sizes = default_hidden_sizes(request.benchmark)
-    epochs = request.epochs if request.epochs is not None else default_epochs(request.benchmark)
+    evaluation_profile = (
+        load_evaluation_benchmark_profile(request.evaluation_profile, request.benchmark)
+        if request.evaluation_profile is not None
+        else None
+    )
+    profile_training = evaluation_profile["training"] if evaluation_profile is not None else {}
+    profile_online_delta = evaluation_profile["online_delta"] if evaluation_profile is not None else {}
+    include_test_metrics = evaluation_profile is not None
+    epochs = (
+        request.epochs
+        if request.epochs is not None
+        else int(profile_training.get("epochs", default_epochs(request.benchmark)))
+    )
+    batch_size = (
+        request.batch_size
+        if request.batch_size is not None
+        else int(profile_training.get("batch_size", DEFAULT_BATCH_SIZE))
+    )
+    weight_scale = (
+        request.weight_scale
+        if request.weight_scale is not None
+        else float(profile_training.get("weight_scale", DEFAULT_WEIGHT_SCALE))
+    )
     run_indices = _resolve_run_indices(request, suite_config)
-    learning_rates = _resolve_learning_rates(request.learning_rate_preset, suite_config)
-    annealing_settings = _resolve_annealing_settings(request, suite_config)
+    learning_rates = (
+        [float(profile_training["learning_rate"])]
+        if evaluation_profile is not None
+        else _resolve_learning_rates(request.learning_rate_preset, suite_config)
+    )
+    annealing_settings = _resolve_annealing_settings(request, suite_config, profile_online_delta)
+    online_learning_rate = (
+        request.online_learning_rate
+        if request.online_learning_rate is not None
+        else profile_online_delta.get("online_learning_rate")
+    )
+    online_batch_size = (
+        request.online_batch_size
+        if request.online_batch_size is not None
+        else int(profile_online_delta.get("online_batch_size", batch_size))
+    )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    profile_suffix = (
+        f"evaluation_profile_{request.evaluation_profile}"
+        if request.evaluation_profile is not None
+        else f"lr_preset_{request.learning_rate_preset}"
+    )
     output_dir = (
         Path(request.output_root)
-        / f"{timestamp}_{request.benchmark}_{request.exp}_lr_preset_{request.learning_rate_preset}"
+        / f"{timestamp}_{request.benchmark}_{request.exp}_{profile_suffix}"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -124,10 +172,15 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
             ),
             "epochs": epochs,
             "learning_rate": learning_rate,
-            "batch_size": DEFAULT_BATCH_SIZE,
-            "weight_scale": DEFAULT_WEIGHT_SCALE,
+            "batch_size": batch_size,
+            "weight_scale": weight_scale,
+            "online_learning_rate": online_learning_rate,
+            "online_batch_size": online_batch_size,
             "runs": list(run_indices),
             "learning_rate_preset": request.learning_rate_preset,
+            "evaluation_profile": evaluation_profile,
+            "include_test_metrics": include_test_metrics,
+            "export_layout_frames": request.export_layout_frames,
             "neighborhood_operations": _suite_neighborhood_operations(request.exp, suite_config),
             "annealing": annealing_settings,
         }
@@ -141,7 +194,10 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
                 run_indices=run_indices,
                 epochs=epochs,
                 learning_rate=learning_rate,
+                batch_size=batch_size,
+                weight_scale=weight_scale,
                 no_plots=request.no_plots,
+                include_test_metrics=include_test_metrics,
             )
         elif request.exp == "random-baseline":
             rows, count = _run_random_baseline_suite(
@@ -152,7 +208,10 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
                 run_indices=run_indices,
                 epochs=epochs,
                 learning_rate=learning_rate,
+                batch_size=batch_size,
+                weight_scale=weight_scale,
                 no_plots=request.no_plots,
+                include_test_metrics=include_test_metrics,
             )
         else:
             rows, count = _run_online_delta_suite(
@@ -163,9 +222,15 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
                 run_indices=run_indices,
                 epochs=epochs,
                 learning_rate=learning_rate,
+                batch_size=batch_size,
+                weight_scale=weight_scale,
+                online_learning_rate=online_learning_rate or learning_rate,
+                online_batch_size=online_batch_size,
                 annealing_settings=annealing_settings,
                 neighborhood_operations=_suite_neighborhood_operations(request.exp, suite_config),
                 no_plots=request.no_plots,
+                export_layout_frames=request.export_layout_frames,
+                include_test_metrics=include_test_metrics,
             )
 
         run_count += count
@@ -180,6 +245,11 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
                 "run_count": count,
                 "runs_dir": str(lr_dir / "runs"),
                 "plots_single_dir": str(lr_dir / "plots_single"),
+                "layout_frames_dir": (
+                    str(lr_dir / "layout_frames")
+                    if request.export_layout_frames and not request.no_plots
+                    else None
+                ),
             },
         )
 
@@ -208,7 +278,10 @@ def _run_all_suite(
     run_indices: tuple[int, ...],
     epochs: int,
     learning_rate: float,
+    batch_size: int,
+    weight_scale: float,
     no_plots: bool,
+    include_test_metrics: bool,
 ) -> tuple[list[dict[str, object]], int]:
     candidates = tuple(
         LayoutCandidate(f"all_{activation_name}", activation_name)
@@ -223,11 +296,12 @@ def _run_all_suite(
             training_config=TrainingConfig(
                 epochs=epochs,
                 learning_rate=learning_rate,
-                batch_size=DEFAULT_BATCH_SIZE,
+                batch_size=batch_size,
                 random_state=DEFAULT_RANDOM_SEED,
             ),
-            weight_scale=DEFAULT_WEIGHT_SCALE,
+            weight_scale=weight_scale,
             primary_metric="validation_loss",
+            include_test_metrics=include_test_metrics,
         )
     )
     return _persist_layout_evaluation(
@@ -249,7 +323,10 @@ def _run_random_baseline_suite(
     run_indices: tuple[int, ...],
     epochs: int,
     learning_rate: float,
+    batch_size: int,
+    weight_scale: float,
     no_plots: bool,
+    include_test_metrics: bool,
 ) -> tuple[list[dict[str, object]], int]:
     rows: list[dict[str, object]] = []
     runs_dir = output_dir / "runs"
@@ -260,7 +337,7 @@ def _run_random_baseline_suite(
     for run_index in run_indices:
         layout_seed = int(run_index)
         training_seed = int(run_index)
-        layout_spec = _random_layout_spec(hidden_sizes, layout_seed)
+        layout_spec = random_layout_spec(hidden_sizes, layout_seed)
         run_payload = _train_layout_once(
             benchmark=benchmark,
             hidden_sizes=hidden_sizes,
@@ -268,6 +345,9 @@ def _run_random_baseline_suite(
             seed=training_seed,
             epochs=epochs,
             learning_rate=learning_rate,
+            batch_size=batch_size,
+            weight_scale=weight_scale,
+            include_test_metrics=include_test_metrics,
         )
         label = "random_start_baseline"
         rows.append(
@@ -314,12 +394,18 @@ def _run_online_delta_suite(
     run_indices: tuple[int, ...],
     epochs: int,
     learning_rate: float,
+    batch_size: int,
+    weight_scale: float,
+    online_learning_rate: float,
+    online_batch_size: int,
     annealing_settings: dict[str, float | int],
     neighborhood_operations: tuple[str, ...],
     no_plots: bool,
+    export_layout_frames: bool,
+    include_test_metrics: bool,
 ) -> tuple[list[dict[str, object]], int]:
     rows: list[dict[str, object]] = []
-    train_cache: dict[tuple[int, str], dict[str, object]] = {}
+    train_cache: dict[tuple[int, str, int, float, bool], dict[str, object]] = {}
 
     runs_dir = output_dir / "runs"
     plots_dir = output_dir / "plots_single"
@@ -329,16 +415,19 @@ def _run_online_delta_suite(
     for run_index in run_indices:
         layout_seed = int(run_index)
         training_seed = int(run_index)
-        start_layout_spec = _random_layout_spec(hidden_sizes, layout_seed)
+        start_layout_spec = random_layout_spec(hidden_sizes, layout_seed)
         snapshot = _run_online_sa(
             benchmark=benchmark,
             hidden_sizes=hidden_sizes,
             start_layout_spec=start_layout_spec,
             seed=training_seed,
             epochs=epochs,
-            learning_rate=learning_rate,
+            learning_rate=online_learning_rate,
+            batch_size=online_batch_size,
+            weight_scale=weight_scale,
             annealing_settings=annealing_settings,
             neighborhood_operations=neighborhood_operations,
+            include_test_metrics=include_test_metrics,
         )
         if snapshot.best_evaluation is None or snapshot.current_evaluation is None:
             raise ValueError("Online-SA lieferte keine finalen Evaluationen.")
@@ -365,6 +454,9 @@ def _run_online_delta_suite(
                 seed=training_seed,
                 epochs=epochs,
                 learning_rate=learning_rate,
+                batch_size=batch_size,
+                weight_scale=weight_scale,
+                include_test_metrics=include_test_metrics,
             )
             final_comparisons.append({**run_payload, "label": label})
             rows.append(
@@ -389,6 +481,7 @@ def _run_online_delta_suite(
                     benchmark,
                     snapshot.best_evaluation.trained_model.to_state_dict(),
                     training_seed,
+                    include_test_metrics=include_test_metrics,
                 ),
             ),
             (
@@ -398,6 +491,7 @@ def _run_online_delta_suite(
                     benchmark,
                     snapshot.current_evaluation.trained_model.to_state_dict(),
                     training_seed,
+                    include_test_metrics=include_test_metrics,
                 ),
             ),
         ]
@@ -435,6 +529,10 @@ def _run_online_delta_suite(
             "training_seed": training_seed,
             "layout_seed": layout_seed,
             "learning_rate": learning_rate,
+            "batch_size": batch_size,
+            "weight_scale": weight_scale,
+            "online_learning_rate": online_learning_rate,
+            "online_batch_size": online_batch_size,
             "neighborhood_operations": list(neighborhood_operations),
             "start_layout": start_layout_spec,
             "best_layout": snapshot.best_evaluation.layout.to_compact_spec(),
@@ -445,12 +543,20 @@ def _run_online_delta_suite(
             "online_history": _online_history_to_dict(snapshot),
             "final_comparisons": final_comparisons,
         }
-        run_path = runs_dir / f"{experiment_id}_run_{run_index:04d}.json"
+        run_id = f"{experiment_id}_run_{run_index:04d}"
+        run_path = runs_dir / f"{run_id}.json"
         _write_json(run_path, run_payload)
         if not no_plots:
             _plot_online_history(
-                plots_dir / f"{experiment_id}_run_{run_index:04d}.png",
+                plots_dir / f"{run_id}.png",
                 snapshot,
+            )
+            write_online_delta_layout_artifacts(
+                snapshot,
+                plots_dir=plots_dir,
+                frames_root=output_dir / "layout_frames",
+                run_id=run_id,
+                export_frames=export_layout_frames,
             )
 
     return _aggregate_summary_rows(rows), len(run_indices)
@@ -505,8 +611,7 @@ def _persist_layout_evaluation(
         std_metrics = item.get("std_metrics", {})
         if not isinstance(metrics, dict):
             continue
-        summary_rows.append(
-            {
+        summary_row = {
                 "experiment_id": experiment_id,
                 "benchmark": benchmark,
                 "learning_rate": learning_rate,
@@ -518,22 +623,27 @@ def _persist_layout_evaluation(
                 "std_train_loss": _dict_get(std_metrics, "train_loss"),
                 "mean_val_loss": metrics.get("val_loss", ""),
                 "std_val_loss": _dict_get(std_metrics, "val_loss"),
-                "mean_test_loss": metrics.get("test_loss", ""),
-                "std_test_loss": _dict_get(std_metrics, "test_loss"),
                 "mean_train_accuracy": metrics.get("train_accuracy", ""),
                 "std_train_accuracy": _dict_get(std_metrics, "train_accuracy"),
                 "mean_val_accuracy": metrics.get("val_accuracy", ""),
                 "std_val_accuracy": _dict_get(std_metrics, "val_accuracy"),
-                "mean_test_accuracy": metrics.get("test_accuracy", ""),
-                "std_test_accuracy": _dict_get(std_metrics, "test_accuracy"),
                 "ranking_score": item.get("ranking_score", ""),
             }
-        )
+        if "test_loss" in metrics:
+            summary_row.update(
+                {
+                    "mean_test_loss": metrics["test_loss"],
+                    "std_test_loss": _dict_get(std_metrics, "test_loss"),
+                    "mean_test_accuracy": metrics["test_accuracy"],
+                    "std_test_accuracy": _dict_get(std_metrics, "test_accuracy"),
+                }
+            )
+        summary_rows.append(summary_row)
     return summary_rows, len(runs)
 
 
 def _cached_training_run(
-    cache: dict[tuple[int, str], dict[str, object]],
+    cache: dict[tuple[int, str, int, float, bool], dict[str, object]],
     *,
     benchmark: str,
     hidden_sizes: tuple[int, ...],
@@ -541,10 +651,13 @@ def _cached_training_run(
     seed: int,
     epochs: int,
     learning_rate: float,
+    batch_size: int,
+    weight_scale: float,
+    include_test_metrics: bool,
 ) -> dict[str, object]:
     layout = parse_layout_spec(layout_spec, hidden_sizes)
     normalized_spec = layout.to_compact_spec()
-    cache_key = (seed, normalized_spec)
+    cache_key = (seed, normalized_spec, batch_size, weight_scale, include_test_metrics)
     if cache_key not in cache:
         cache[cache_key] = _train_layout_once(
             benchmark=benchmark,
@@ -553,6 +666,9 @@ def _cached_training_run(
             seed=seed,
             epochs=epochs,
             learning_rate=learning_rate,
+            batch_size=batch_size,
+            weight_scale=weight_scale,
+            include_test_metrics=include_test_metrics,
         )
     return dict(cache[cache_key])
 
@@ -565,6 +681,9 @@ def _train_layout_once(
     seed: int,
     epochs: int,
     learning_rate: float,
+    batch_size: int,
+    weight_scale: float,
+    include_test_metrics: bool,
 ) -> dict[str, object]:
     dataset = load_benchmark(DatasetConfig(name=benchmark, random_state=seed))
     layout = parse_layout_spec(layout_spec, hidden_sizes)
@@ -574,7 +693,7 @@ def _train_layout_once(
         output_size=dataset.model_output_size,
         layout=layout,
         num_classes=dataset.output_size,
-        weight_scale=DEFAULT_WEIGHT_SCALE,
+        weight_scale=weight_scale,
         random_state=seed,
     )
     training_result = train_model(
@@ -583,9 +702,10 @@ def _train_layout_once(
         TrainingConfig(
             epochs=epochs,
             learning_rate=learning_rate,
-            batch_size=DEFAULT_BATCH_SIZE,
+            batch_size=batch_size,
             random_state=seed,
         ),
+        include_test_metrics=include_test_metrics,
     )
     return {
         "layout_spec": layout.to_compact_spec(),
@@ -605,8 +725,11 @@ def _run_online_sa(
     seed: int,
     epochs: int,
     learning_rate: float,
+    batch_size: int,
+    weight_scale: float,
     annealing_settings: dict[str, float | int],
     neighborhood_operations: tuple[str, ...],
+    include_test_metrics: bool,
 ) -> OnlineAnnealingSnapshot:
     request = OnlineAnnealingRequest(
         dataset_config=DatasetConfig(name=benchmark, random_state=seed),
@@ -615,7 +738,7 @@ def _run_online_sa(
         training_config=TrainingConfig(
             epochs=epochs,
             learning_rate=learning_rate,
-            batch_size=DEFAULT_BATCH_SIZE,
+            batch_size=batch_size,
             random_state=seed,
         ),
         annealing_config=AnnealingConfig(
@@ -627,8 +750,9 @@ def _run_online_sa(
             min_temperature=float(annealing_settings["min_temperature"]),
             neighborhood_operations=neighborhood_operations,
         ),
-        weight_scale=DEFAULT_WEIGHT_SCALE,
+        weight_scale=weight_scale,
         random_state=seed,
+        include_test_metrics=include_test_metrics,
     )
     session = create_online_session(request)
     return online_run_to_completion(session, language="en")
@@ -638,31 +762,45 @@ def _evaluate_model_state(
     benchmark: str,
     model_state: dict[str, object],
     seed: int,
+    *,
+    include_test_metrics: bool,
 ) -> dict[str, float]:
     dataset = load_benchmark(DatasetConfig(name=benchmark, random_state=seed))
     model = ModularMLP.from_state_dict(model_state)
     train_loss, train_accuracy = model.evaluate(dataset.X_train, dataset.y_train)
     val_loss, val_accuracy = model.evaluate(dataset.X_val, dataset.y_val)
-    test_loss, test_accuracy = model.evaluate(dataset.X_test, dataset.y_test)
-    return {
+    metrics = {
         "train_loss": float(train_loss),
         "val_loss": float(val_loss),
-        "test_loss": float(test_loss),
         "train_accuracy": float(train_accuracy),
         "val_accuracy": float(val_accuracy),
-        "test_accuracy": float(test_accuracy),
     }
+    if include_test_metrics:
+        test_loss, test_accuracy = model.evaluate(dataset.X_test, dataset.y_test)
+        metrics.update(
+            {
+                "test_loss": float(test_loss),
+                "test_accuracy": float(test_accuracy),
+            }
+        )
+    return metrics
 
 
 def _training_metrics(training_result) -> dict[str, float]:
-    return {
+    metrics = {
         "train_loss": float(training_result.history["train_loss"][-1]),
         "val_loss": float(training_result.history["val_loss"][-1]),
-        "test_loss": float(training_result.test_metrics["loss"]),
         "train_accuracy": float(training_result.history["train_acc"][-1]),
         "val_accuracy": float(training_result.history["val_acc"][-1]),
-        "test_accuracy": float(training_result.test_metrics["accuracy"]),
     }
+    if training_result.test_metrics:
+        metrics.update(
+            {
+                "test_loss": float(training_result.test_metrics["loss"]),
+                "test_accuracy": float(training_result.test_metrics["accuracy"]),
+            }
+        )
+    return metrics
 
 
 def _summary_row_from_metrics(
@@ -677,7 +815,7 @@ def _summary_row_from_metrics(
     metrics: dict[str, float],
     layout_seed: int | None,
 ) -> dict[str, object]:
-    return {
+    row = {
         "experiment_id": experiment_id,
         "benchmark": benchmark,
         "learning_rate": learning_rate,
@@ -688,11 +826,17 @@ def _summary_row_from_metrics(
         "evaluation_type": evaluation_type,
         "train_loss": metrics["train_loss"],
         "val_loss": metrics["val_loss"],
-        "test_loss": metrics["test_loss"],
         "train_accuracy": metrics["train_accuracy"],
         "val_accuracy": metrics["val_accuracy"],
-        "test_accuracy": metrics["test_accuracy"],
     }
+    if "test_loss" in metrics:
+        row.update(
+            {
+                "test_loss": metrics["test_loss"],
+                "test_accuracy": metrics["test_accuracy"],
+            }
+        )
+    return row
 
 
 def _aggregate_summary_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -711,17 +855,16 @@ def _aggregate_summary_rows(rows: list[dict[str, object]]) -> list[dict[str, obj
         first = group[0]
         metric_arrays = {
             metric: np.asarray([float(row[metric]) for row in group], dtype=np.float64)
-            for metric in (
-                "train_loss",
-                "val_loss",
-                "test_loss",
-                "train_accuracy",
-                "val_accuracy",
-                "test_accuracy",
-            )
+            for metric in ("train_loss", "val_loss", "train_accuracy", "val_accuracy")
         }
-        aggregate_rows.append(
-            {
+        if "test_loss" in first:
+            metric_arrays.update(
+                {
+                    metric: np.asarray([float(row[metric]) for row in group], dtype=np.float64)
+                    for metric in ("test_loss", "test_accuracy")
+                }
+            )
+        aggregate_row = {
                 "experiment_id": first["experiment_id"],
                 "benchmark": first["benchmark"],
                 "learning_rate": first["learning_rate"],
@@ -733,23 +876,29 @@ def _aggregate_summary_rows(rows: list[dict[str, object]]) -> list[dict[str, obj
                 "std_train_loss": float(metric_arrays["train_loss"].std(ddof=0)),
                 "mean_val_loss": float(metric_arrays["val_loss"].mean()),
                 "std_val_loss": float(metric_arrays["val_loss"].std(ddof=0)),
-                "mean_test_loss": float(metric_arrays["test_loss"].mean()),
-                "std_test_loss": float(metric_arrays["test_loss"].std(ddof=0)),
                 "mean_train_accuracy": float(metric_arrays["train_accuracy"].mean()),
                 "std_train_accuracy": float(metric_arrays["train_accuracy"].std(ddof=0)),
                 "mean_val_accuracy": float(metric_arrays["val_accuracy"].mean()),
                 "std_val_accuracy": float(metric_arrays["val_accuracy"].std(ddof=0)),
-                "mean_test_accuracy": float(metric_arrays["test_accuracy"].mean()),
-                "std_test_accuracy": float(metric_arrays["test_accuracy"].std(ddof=0)),
                 "ranking_score": float(metric_arrays["val_loss"].mean()),
             }
-        )
+        if "test_loss" in metric_arrays:
+            aggregate_row.update(
+                {
+                    "mean_test_loss": float(metric_arrays["test_loss"].mean()),
+                    "std_test_loss": float(metric_arrays["test_loss"].std(ddof=0)),
+                    "mean_test_accuracy": float(metric_arrays["test_accuracy"].mean()),
+                    "std_test_accuracy": float(metric_arrays["test_accuracy"].std(ddof=0)),
+                }
+            )
+        aggregate_rows.append(aggregate_row)
     return sorted(aggregate_rows, key=lambda row: float(row["ranking_score"]))
 
 
 def _write_aggregate_plots(output_dir: Path, rows: list[dict[str, object]]) -> None:
     _plot_metric_by_layout(output_dir / "val_loss_by_layout.png", rows, "mean_val_loss", "Validation loss")
-    _plot_metric_by_layout(output_dir / "test_loss_by_layout.png", rows, "mean_test_loss", "Test loss")
+    if any("mean_test_loss" in row for row in rows):
+        _plot_metric_by_layout(output_dir / "test_loss_by_layout.png", rows, "mean_test_loss", "Test loss")
     _plot_hyperparameter_comparison(output_dir / "hyperparameter_comparison.png", rows)
     _plot_mean_curves(output_dir / "mean_curves.png", output_dir.parent)
 
@@ -929,36 +1078,19 @@ def _online_history_to_dict(snapshot: OnlineAnnealingSnapshot) -> list[dict[str,
 
 
 def _neighbor_counts(snapshot: OnlineAnnealingSnapshot) -> dict[str, int]:
-    counts = {"set_neuron": 0, "swap_neurons": 0, "fill_layer": 0}
+    counts = {"set_neuron": 0, "swap_neurons": 0}
     for step in snapshot.history:
         if step.neighbor_label.startswith("set:"):
             counts["set_neuron"] += 1
         elif step.neighbor_label.startswith("swap:"):
             counts["swap_neurons"] += 1
-        elif step.neighbor_label.startswith("fill:"):
-            counts["fill_layer"] += 1
     return counts
-
-
-def _random_layout_spec(hidden_sizes: tuple[int, ...], layout_seed: int) -> str:
-    rng = np.random.default_rng(layout_seed)
-    layers: list[str] = []
-    for layer_size in hidden_sizes:
-        layers.append(
-            ",".join(
-                str(value)
-                for value in rng.choice(SUPPORTED_ACTIVATIONS, size=layer_size, replace=True)
-            )
-        )
-    return "|".join(layers)
 
 
 def _resolve_run_indices(
     request: ExperimentSuiteRequest,
     suite_config: dict[str, Any],
 ) -> tuple[int, ...]:
-    if request.seeds:
-        return tuple(int(seed) for seed in request.seeds)
     run_count = request.run_count or int(suite_config["defaults"]["run_count"])
     if run_count <= 0:
         raise ValueError("--runs muss positiv sein.")
@@ -980,32 +1112,52 @@ def _resolve_learning_rates(
 def _resolve_annealing_settings(
     request: ExperimentSuiteRequest,
     suite_config: dict[str, Any],
+    evaluation_profile: dict[str, Any] | None = None,
 ) -> dict[str, float | int]:
     defaults = suite_config.get("defaults", {})
     configured = defaults.get("annealing", {}) if isinstance(defaults, dict) else {}
     if not isinstance(configured, dict):
         configured = {}
+    profile = evaluation_profile or {}
     settings: dict[str, float | int] = {
         "start_temperature": request.start_temperature
         if request.start_temperature is not None
-        else float(configured.get("start_temperature", DEFAULT_ANNEALING_START_TEMPERATURE)),
+        else float(
+            profile.get(
+                "start_temperature",
+                configured.get("start_temperature", DEFAULT_ANNEALING_START_TEMPERATURE),
+            )
+        ),
         "cooling_parameter": request.cooling_parameter
         if request.cooling_parameter is not None
-        else float(configured.get("cooling_parameter", DEFAULT_ANNEALING_COOLING_PARAMETER)),
+        else float(
+            profile.get(
+                "cooling_parameter",
+                configured.get("cooling_parameter", DEFAULT_ANNEALING_COOLING_PARAMETER),
+            )
+        ),
         "iterations_per_temperature": request.iterations_per_temperature
         if request.iterations_per_temperature is not None
         else int(
-            configured.get(
+            profile.get(
                 "iterations_per_temperature",
-                DEFAULT_ANNEALING_ITERATIONS_PER_TEMPERATURE,
+                configured.get(
+                    "iterations_per_temperature",
+                    DEFAULT_ANNEALING_ITERATIONS_PER_TEMPERATURE,
+                ),
             )
         ),
         "max_steps": request.max_steps
         if request.max_steps is not None
-        else int(configured.get("max_steps", DEFAULT_ANNEALING_MAX_STEPS)),
+        else int(profile.get("max_steps", configured.get("max_steps", DEFAULT_ANNEALING_MAX_STEPS))),
         "min_temperature": request.min_temperature
         if request.min_temperature is not None
-        else float(configured.get("min_temperature", DEFAULT_ANNEALING_MIN_TEMPERATURE)),
+        else float(
+            profile.get(
+                "min_temperature",
+                configured.get("min_temperature", DEFAULT_ANNEALING_MIN_TEMPERATURE),
+            )
+        ),
     }
     AnnealingConfig(
         start_temperature=float(settings["start_temperature"]),

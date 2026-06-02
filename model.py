@@ -45,30 +45,6 @@ class ForwardCache:
     output_values: Array
     probabilities: Array
 
-    @property
-    def z1(self) -> Array:
-        """Kompatibilitaetszugriff fuer den ersten Hidden-Layer."""
-
-        return self.pre_activations[0]
-
-    @property
-    def a1(self) -> Array:
-        """Kompatibilitaetszugriff fuer den ersten Hidden-Layer."""
-
-        return self.activations[0]
-
-    @property
-    def z2(self) -> Array:
-        """Kompatibilitaetszugriff fuer den zweiten Hidden-Layer."""
-
-        return self.pre_activations[1]
-
-    @property
-    def a2(self) -> Array:
-        """Kompatibilitaetszugriff fuer den zweiten Hidden-Layer."""
-
-        return self.activations[1]
-
 
 @dataclass(frozen=True)
 class WeightedTerm:
@@ -195,30 +171,6 @@ class ModularMLP:
 
         return len(self.hidden_sizes)
 
-    @property
-    def hidden_weights(self) -> tuple[Array, ...]:
-        """Gewichtsmatrizen zwischen Eingabe/Hidden-Layern."""
-
-        return tuple(self.weights[:-1])
-
-    @property
-    def hidden_biases(self) -> tuple[Array, ...]:
-        """Bias-Vektoren der Hidden-Layer."""
-
-        return tuple(self.biases[:-1])
-
-    @property
-    def output_weight(self) -> Array:
-        """Gewichtsmatrix des Output-Layers."""
-
-        return self.weights[-1]
-
-    @property
-    def output_bias(self) -> Array:
-        """Bias-Vektor des Output-Layers."""
-
-        return self.biases[-1]
-
     def clone(self) -> "ModularMLP":
         """Erzeugt eine tiefe Kopie des Modells fuer Vergleichsmodi."""
 
@@ -282,42 +234,6 @@ class ModularMLP:
             for bias_vector in payload["biases"]  # type: ignore[index]
         ]
         return model
-
-    @property
-    def W1(self) -> Array:
-        """Kompatibilitaetszugriff fuer den ersten Hidden-Layer."""
-
-        return self.weights[0]
-
-    @property
-    def b1(self) -> Array:
-        """Kompatibilitaetszugriff fuer den ersten Hidden-Layer."""
-
-        return self.biases[0]
-
-    @property
-    def W2(self) -> Array:
-        """Kompatibilitaetszugriff fuer den zweiten Hidden- bzw. letzten Hidden-Ausgang."""
-
-        return self.weights[1]
-
-    @property
-    def b2(self) -> Array:
-        """Kompatibilitaetszugriff fuer den zweiten Hidden-Layer."""
-
-        return self.biases[1]
-
-    @property
-    def W3(self) -> Array:
-        """Kompatibilitaetszugriff fuer den Output-Layer in klassischen 2-Layer-Setups."""
-
-        return self.weights[-1]
-
-    @property
-    def b3(self) -> Array:
-        """Kompatibilitaetszugriff fuer den Output-Layer in klassischen 2-Layer-Setups."""
-
-        return self.biases[-1]
 
     def forward(self, X: Array) -> ForwardCache:
         """Fuehrt einen kompletten Forward-Pass durch."""

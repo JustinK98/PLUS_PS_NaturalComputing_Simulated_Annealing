@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import math
 
-from activations import ActivationLayout
-from annealing_objectives import ObjectiveEvaluation
-from configs import SUPPORTED_ACTIVATIONS
-
-
-SUPPORTED_NEIGHBORHOOD_OPERATIONS = ("set_neuron", "fill_layer", "swap_neurons")
+SUPPORTED_NEIGHBORHOOD_OPERATIONS = ("set_neuron", "swap_neurons")
 
 
 @dataclass(frozen=True)
@@ -24,8 +19,6 @@ class AnnealingConfig:
     max_steps: int
     min_temperature: float
     neighborhood_operations: tuple[str, ...]
-    operation_probabilities: dict[str, float] | None = None
-    activation_probabilities: dict[str, float] | None = None
 
     def __post_init__(self) -> None:
         if self.start_temperature <= 0.0:
@@ -49,62 +42,6 @@ class AnnealingConfig:
             )
         if not self.neighborhood_operations:
             raise ValueError("Mindestens ein Nachbarschaftstyp muss aktiv sein.")
-        _validate_probability_map(
-            self.operation_probabilities,
-            allowed_keys=SUPPORTED_NEIGHBORHOOD_OPERATIONS,
-            label="operation_probabilities",
-        )
-        _validate_probability_map(
-            self.activation_probabilities,
-            allowed_keys=SUPPORTED_ACTIVATIONS,
-            label="activation_probabilities",
-        )
-
-
-@dataclass
-class AnnealingStep:
-    """Ein einzelner Simulated-Annealing-Schritt."""
-
-    step_index: int
-    temperature: float
-    previous_layout: ActivationLayout
-    candidate_layout: ActivationLayout
-    previous_evaluation: ObjectiveEvaluation
-    candidate_evaluation: ObjectiveEvaluation
-    delta: float
-    acceptance_probability: float
-    random_draw: float
-    accepted: bool
-    reason_code: str
-    neighbor_label: str
-    best_score_after_step: float
-    accepted_steps_after_step: int
-    rejected_steps_after_step: int
-
-
-@dataclass
-class AnnealingState:
-    """Laufender Zustand eines Simulated-Annealing-Prozesses."""
-
-    start_evaluation: ObjectiveEvaluation
-    current_evaluation: ObjectiveEvaluation
-    best_evaluation: ObjectiveEvaluation
-    current_temperature: float
-    step_index: int = 0
-    accepted_steps: int = 0
-    rejected_steps: int = 0
-    accepted_worse_steps: int = 0
-    history: list[AnnealingStep] = field(default_factory=list)
-    latest_candidate: ObjectiveEvaluation | None = None
-    latest_neighbor_label: str = ""
-
-    @property
-    def acceptance_rate(self) -> float:
-        """Anteil akzeptierter Schritte."""
-
-        if self.step_index == 0:
-            return 0.0
-        return self.accepted_steps / self.step_index
 
 
 def acceptance_probability(delta: float, temperature: float) -> float:
@@ -120,37 +57,3 @@ def acceptance_probability(delta: float, temperature: float) -> float:
     if temperature <= 0.0:
         return 0.0
     return math.exp(-delta / temperature)
-
-
-def annealing_stop_reasons(
-    state: AnnealingState,
-    config: AnnealingConfig,
-    neighbor_count: int,
-) -> list[str]:
-    """Liefert alle aktuell aktiven Stopgruende."""
-
-    reasons: list[str] = []
-    if state.step_index >= config.max_steps:
-        reasons.append("max_steps_reached")
-    if state.current_temperature <= config.min_temperature:
-        reasons.append("temperature_below_threshold")
-    if neighbor_count <= 0:
-        reasons.append("no_neighbors")
-    return reasons
-
-
-def _validate_probability_map(
-    values: dict[str, float] | None,
-    *,
-    allowed_keys: tuple[str, ...],
-    label: str,
-) -> None:
-    if values is None:
-        return
-    invalid_keys = [key for key in values if key not in allowed_keys]
-    if invalid_keys:
-        raise ValueError(f"{label} enthaelt unbekannte Keys: {', '.join(invalid_keys)}")
-    if any(value < 0.0 for value in values.values()):
-        raise ValueError(f"{label} darf keine negativen Werte enthalten.")
-    if not any(value > 0.0 for value in values.values()):
-        raise ValueError(f"{label} braucht mindestens einen positiven Wert.")

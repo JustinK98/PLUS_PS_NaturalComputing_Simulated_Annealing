@@ -11,11 +11,3 @@ class WorkspacePreferences:
 
     language: str = "de"
     detail_mode: str = "beginner"
-
-
-@dataclass
-class AppState:
-    """Aktueller Shell-Zustand der Qt-App."""
-
-    workspace: str
-    preferences: WorkspacePreferences
