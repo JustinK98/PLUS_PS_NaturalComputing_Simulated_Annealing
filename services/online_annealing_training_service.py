@@ -35,11 +35,21 @@ class OnlineAnnealingRequest:
     annealing_config: AnnealingConfig
     weight_scale: float
     random_state: int
-    include_test_metrics: bool = True
+    weight_seed: int | None = None
+    batch_seed: int | None = None
+    proposal_seed: int | None = None
+    acceptance_seed: int | None = None
+    diagnostics_interval: str = "online_epoch"
+    target_online_epochs: float | None = None
+    stop_at_target_online_epochs: bool = False
 
     def __post_init__(self) -> None:
         if self.weight_scale <= 0.0:
             raise ValueError("weight_scale muss positiv sein.")
+        if self.diagnostics_interval not in {"online_epoch", "proposal"}:
+            raise ValueError("diagnostics_interval muss online_epoch oder proposal sein.")
+        if self.target_online_epochs is not None and self.target_online_epochs <= 0.0:
+            raise ValueError("target_online_epochs muss positiv sein.")
 
 
 @dataclass
@@ -47,7 +57,7 @@ class OnlineLayoutEvaluation:
     """Layout-Bewertung fuer den Online-Modus.
 
     `objective_value` und `comparable_score` sind bewusst der aktuelle Batch-Loss.
-    Die Validierungswerte dienen separat zur Auswahl des besten beobachteten Layouts.
+    Die Validierungswerte sind reine Diagnostik und beeinflussen keine SA-Entscheidung.
     """
 
     layout: ActivationLayout
@@ -84,7 +94,11 @@ class OnlineAnnealingStep:
     rejected_steps_after_step: int
     batch_loss_before: float
     candidate_loss_after: float
+    post_training_batch_loss: float
     trained_after_accept: bool
+    trained_batch_updates_after_step: int
+    effective_online_epochs_after_step: float
+    diagnostics_refreshed: bool
     epoch_index: int
     batch_index: int
     batch_start: int
@@ -103,6 +117,7 @@ class OnlineAnnealingState:
     accepted_steps: int = 0
     rejected_steps: int = 0
     accepted_worse_steps: int = 0
+    trained_batch_updates: int = 0
     history: list[OnlineAnnealingStep] = field(default_factory=list)
     latest_candidate: OnlineLayoutEvaluation | None = None
     latest_neighbor_label: str = ""
@@ -125,6 +140,7 @@ class MiniBatchCursor:
     epoch_index: int = 0
     batch_index: int = 0
     batch_start: int = 0
+    trained_examples: int = 0
     order: np.ndarray = field(init=False)
 
     def __post_init__(self) -> None:
@@ -142,11 +158,23 @@ class MiniBatchCursor:
         end = min(self.batch_start + self.batch_size, self.train_size)
         return self.order[self.batch_start:end]
 
-    def advance(self) -> None:
-        self.batch_start += self.batch_size
+    @property
+    def effective_epochs(self) -> float:
+        """Training coverage measured from batches that actually updated weights."""
+
+        return self.trained_examples / self.train_size
+
+    def advance(self) -> bool:
+        """Consume the current training batch and report whether an epoch completed."""
+
+        consumed = len(self.current_indices())
+        self.trained_examples += consumed
+        self.batch_start += consumed
         self.batch_index += 1
         if self.batch_start >= self.train_size:
             self._start_next_epoch()
+            return True
+        return False
 
     def _start_next_epoch(self) -> None:
         self.epoch_index += 1
@@ -165,7 +193,8 @@ class OnlineAnnealingSession:
     dataset: DatasetBundle
     model: ModularMLP
     start_layout: ActivationLayout
-    rng: np.random.Generator
+    proposal_rng: np.random.Generator
+    acceptance_rng: np.random.Generator
     batch_cursor: MiniBatchCursor
     state: OnlineAnnealingState | None = None
     end_evaluation: OnlineLayoutEvaluation | None = None
@@ -188,6 +217,8 @@ class OnlineAnnealingSnapshot:
     last_step: OnlineAnnealingStep | None
     history: tuple[OnlineAnnealingStep, ...]
     accepted_steps: int
+    trained_batch_updates: int
+    effective_online_epochs: float
     acceptance_rate: float
     current_temperature: float
     stop_reasons: tuple[str, ...]
@@ -209,21 +240,27 @@ def create_online_session(request: OnlineAnnealingRequest) -> OnlineAnnealingSes
         layout=start_layout,
         num_classes=dataset.output_size,
         weight_scale=request.weight_scale,
-        random_state=request.random_state,
+        random_state=_resolved_seed(request.weight_seed, request.random_state),
     )
-    rng = np.random.default_rng(request.random_state)
     batch_cursor = MiniBatchCursor(
         train_size=dataset.train_size,
         batch_size=request.training_config.batch_size,
         shuffle=request.training_config.shuffle,
-        rng=np.random.default_rng(request.training_config.random_state),
+        rng=np.random.default_rng(
+            _resolved_seed(request.batch_seed, request.training_config.random_state)
+        ),
     )
     return OnlineAnnealingSession(
         request=request,
         dataset=dataset,
         model=model,
         start_layout=start_layout,
-        rng=rng,
+        proposal_rng=np.random.default_rng(
+            _resolved_seed(request.proposal_seed, request.random_state)
+        ),
+        acceptance_rng=np.random.default_rng(
+            _resolved_seed(request.acceptance_seed, request.random_state)
+        ),
         batch_cursor=batch_cursor,
     )
 
@@ -265,7 +302,7 @@ def online_step_once(
     if not online_should_stop(session):
         _online_step(session)
     if online_should_stop(session) and session.state is not None:
-        session.end_evaluation = session.state.current_evaluation
+        _finalize_online_session(session)
     return online_current_snapshot(session, language)
 
 
@@ -285,7 +322,7 @@ def online_run_steps(
             break
         _online_step(session)
     if online_should_stop(session) and session.state is not None:
-        session.end_evaluation = session.state.current_evaluation
+        _finalize_online_session(session)
     return online_current_snapshot(session, language)
 
 
@@ -300,7 +337,7 @@ def online_run_to_completion(
     while not online_should_stop(session):
         _online_step(session)
     if session.state is not None:
-        session.end_evaluation = session.state.current_evaluation
+        _finalize_online_session(session)
     return online_current_snapshot(session, language)
 
 
@@ -312,7 +349,8 @@ def online_reset(
 
     replacement = create_online_session(session.request)
     session.model = replacement.model
-    session.rng = replacement.rng
+    session.proposal_rng = replacement.proposal_rng
+    session.acceptance_rng = replacement.acceptance_rng
     session.batch_cursor = replacement.batch_cursor
     session.state = None
     session.end_evaluation = None
@@ -341,6 +379,8 @@ def online_current_snapshot(
             last_step=None,
             history=(),
             accepted_steps=0,
+            trained_batch_updates=0,
+            effective_online_epochs=session.batch_cursor.effective_epochs,
             acceptance_rate=0.0,
             current_temperature=session.request.annealing_config.start_temperature,
             stop_reasons=(),
@@ -364,6 +404,8 @@ def online_current_snapshot(
         last_step=last_step,
         history=tuple(state.history),
         accepted_steps=state.accepted_steps,
+        trained_batch_updates=state.trained_batch_updates,
+        effective_online_epochs=session.batch_cursor.effective_epochs,
         acceptance_rate=state.acceptance_rate,
         current_temperature=state.current_temperature,
         stop_reasons=stop_reasons,
@@ -394,18 +436,19 @@ def _online_step(session: OnlineAnnealingSession) -> OnlineAnnealingStep:
         batch_loss=batch_loss_before,
         batch_accuracy=batch_acc_before,
         phase="before_candidate",
+        refresh_diagnostics=session.request.diagnostics_interval == "proposal",
     )
 
     neighbors = generate_neighbors(previous_layout, session.request.annealing_config.neighborhood_operations)
     if not neighbors:
         raise ValueError("Fuer das aktuelle Layout wurden keine Nachbarn erzeugt.")
     if tuple(session.request.annealing_config.neighborhood_operations) == ("set_neuron",):
-        chosen_neighbor = sample_set_neuron_neighbor(previous_layout, session.rng)
+        chosen_neighbor = sample_set_neuron_neighbor(previous_layout, session.proposal_rng)
     else:
         chosen_neighbor = sample_neighbor(
             previous_layout,
             session.request.annealing_config.neighborhood_operations,
-            session.rng,
+            session.proposal_rng,
         )
 
     session.model.set_layout(chosen_neighbor.layout)
@@ -416,23 +459,27 @@ def _online_step(session: OnlineAnnealingSession) -> OnlineAnnealingStep:
         batch_loss=candidate_loss_after,
         batch_accuracy=candidate_acc_after,
         phase="candidate_no_training",
+        refresh_diagnostics=False,
     )
 
     delta = float(candidate_loss_after - batch_loss_before)
     current_temperature = _temperature_for_iteration(session, state.step_index)
     probability = acceptance_probability(delta, current_temperature)
-    random_draw = float(session.rng.random())
+    random_draw = float(session.acceptance_rng.random())
     accepted = delta <= 0.0 or random_draw <= probability
     reason_code = "improved_or_equal"
     if delta > 0.0:
         reason_code = "accepted_worse" if accepted else "rejected_worse"
 
     trained_after_accept = False
+    diagnostics_refreshed = False
+    post_loss = batch_loss_before
     if accepted:
         state.accepted_steps += 1
         if delta > 0.0:
             state.accepted_worse_steps += 1
         trained_after_accept = True
+        state.trained_batch_updates += 1
         train_one_batch(
             session.model,
             X_batch,
@@ -440,15 +487,23 @@ def _online_step(session: OnlineAnnealingSession) -> OnlineAnnealingStep:
             session.request.training_config.learning_rate,
         )
         post_loss, post_acc = evaluate_batch(session.model, X_batch, y_batch)
+        completed_epoch = session.batch_cursor.advance()
+        diagnostics_refreshed = (
+            session.request.diagnostics_interval == "proposal" or completed_epoch
+        )
         current_evaluation = _build_evaluation(
             session,
             session.model.layout,
             batch_loss=post_loss,
             batch_accuracy=post_acc,
             phase="accepted_after_training",
+            refresh_diagnostics=diagnostics_refreshed,
         )
         state.current_evaluation = current_evaluation
-        if current_evaluation.val_loss < state.best_evaluation.val_loss:
+        if (
+            diagnostics_refreshed
+            and current_evaluation.val_loss < state.best_evaluation.val_loss
+        ):
             state.best_evaluation = current_evaluation
     else:
         session.model.set_layout(previous_layout)
@@ -459,7 +514,6 @@ def _online_step(session: OnlineAnnealingSession) -> OnlineAnnealingStep:
     state.current_temperature = _temperature_for_iteration(session, state.step_index)
     state.latest_candidate = candidate_evaluation
     state.latest_neighbor_label = chosen_neighbor.label
-    session.batch_cursor.advance()
 
     step_record = OnlineAnnealingStep(
         step_index=state.step_index,
@@ -479,7 +533,11 @@ def _online_step(session: OnlineAnnealingSession) -> OnlineAnnealingStep:
         rejected_steps_after_step=state.rejected_steps,
         batch_loss_before=float(batch_loss_before),
         candidate_loss_after=float(candidate_loss_after),
+        post_training_batch_loss=float(post_loss),
         trained_after_accept=trained_after_accept,
+        trained_batch_updates_after_step=state.trained_batch_updates,
+        effective_online_epochs_after_step=session.batch_cursor.effective_epochs,
+        diagnostics_refreshed=diagnostics_refreshed,
         epoch_index=session.batch_cursor.epoch_index,
         batch_index=session.batch_cursor.batch_index,
         batch_start=session.batch_cursor.batch_start,
@@ -496,30 +554,35 @@ def _build_evaluation(
     batch_loss: float,
     batch_accuracy: float,
     phase: str,
+    refresh_diagnostics: bool = True,
 ) -> OnlineLayoutEvaluation:
-    train_loss, train_acc = session.model.evaluate(session.dataset.X_train, session.dataset.y_train)
-    val_loss, val_acc = session.model.evaluate(session.dataset.X_val, session.dataset.y_val)
-    if session.request.include_test_metrics:
-        test_loss, test_acc = session.model.evaluate(session.dataset.X_test, session.dataset.y_test)
+    state = session.state
+    if refresh_diagnostics or state is None:
+        train_loss, train_acc = session.model.evaluate(session.dataset.X_train, session.dataset.y_train)
+        val_loss, val_acc = session.model.evaluate(session.dataset.X_val, session.dataset.y_val)
     else:
-        test_loss, test_acc = float("nan"), float("nan")
+        train_loss = state.current_evaluation.train_loss
+        train_acc = state.current_evaluation.train_accuracy
+        val_loss = state.current_evaluation.val_loss
+        val_acc = state.current_evaluation.val_accuracy
     return OnlineLayoutEvaluation(
         layout=layout,
         comparable_score=float(batch_loss),
         objective_value=float(batch_loss),
         train_loss=float(train_loss),
         val_loss=float(val_loss),
-        test_loss=float(test_loss),
+        test_loss=float("nan"),
         train_accuracy=float(train_acc),
         val_accuracy=float(val_acc),
-        test_accuracy=float(test_acc),
+        test_accuracy=float("nan"),
         trained_model=session.model.clone(),
         metadata={
             "sa_evaluation_mode": "online_delta",
             "phase": phase,
             "batch_loss": f"{float(batch_loss):.12g}",
             "batch_accuracy": f"{float(batch_accuracy):.12g}",
-            "best_layout_selection_metric": "validation_loss_after_update",
+            "diagnostics_refreshed": str(bool(refresh_diagnostics)).lower(),
+            "diagnostic_best_layout_selection_metric": "validation_loss_checkpoint",
         },
     )
 
@@ -527,6 +590,32 @@ def _build_evaluation(
 def _current_batch(session: OnlineAnnealingSession) -> tuple[np.ndarray, np.ndarray]:
     indices = session.batch_cursor.current_indices()
     return session.dataset.X_train[indices], session.dataset.y_train[indices]
+
+
+def _resolved_seed(explicit_seed: int | None, fallback_seed: int) -> int:
+    return int(fallback_seed if explicit_seed is None else explicit_seed)
+
+
+def _finalize_online_session(session: OnlineAnnealingSession) -> None:
+    """Refresh final diagnostics exactly once after the search has stopped."""
+
+    state = session.state
+    if state is None or session.end_evaluation is not None:
+        return
+    X_batch, y_batch = _current_batch(session)
+    batch_loss, batch_acc = evaluate_batch(session.model, X_batch, y_batch)
+    final_evaluation = _build_evaluation(
+        session,
+        session.model.layout,
+        batch_loss=batch_loss,
+        batch_accuracy=batch_acc,
+        phase="final",
+        refresh_diagnostics=True,
+    )
+    state.current_evaluation = final_evaluation
+    if final_evaluation.val_loss < state.best_evaluation.val_loss:
+        state.best_evaluation = final_evaluation
+    session.end_evaluation = final_evaluation
 
 
 def _temperature_for_iteration(session: OnlineAnnealingSession, iteration_index: int) -> float:
@@ -548,6 +637,12 @@ def _online_stop_reasons(session: OnlineAnnealingSession) -> list[str]:
         reasons.append("max_steps_reached")
     if state.current_temperature <= session.request.annealing_config.min_temperature:
         reasons.append("temperature_below_threshold")
+    if (
+        session.request.stop_at_target_online_epochs
+        and session.request.target_online_epochs is not None
+        and session.batch_cursor.effective_epochs >= session.request.target_online_epochs
+    ):
+        reasons.append("target_online_epochs_reached")
     if not generate_neighbors(state.current_evaluation.layout, session.request.annealing_config.neighborhood_operations):
         reasons.append("no_neighbors")
     return reasons
@@ -583,11 +678,13 @@ def _reason_label(stop_reasons: tuple[str, ...], neighbor_label: str, language: 
             "max_steps_reached": "maximum number of steps reached",
             "temperature_below_threshold": "temperature below threshold",
             "no_neighbors": "no valid neighbors left",
+            "target_online_epochs_reached": "target online epochs reached",
         }
         mapping_de = {
             "max_steps_reached": "maximale Schrittzahl erreicht",
             "temperature_below_threshold": "Temperatur unter Mindestwert",
             "no_neighbors": "keine gueltigen Nachbarn mehr",
+            "target_online_epochs_reached": "Ziel fuer Online-Epochen erreicht",
         }
         return ", ".join((mapping_en if language == "en" else mapping_de).get(reason, reason) for reason in stop_reasons)
     if neighbor_label:

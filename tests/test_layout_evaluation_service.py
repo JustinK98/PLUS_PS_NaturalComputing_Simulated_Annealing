@@ -5,9 +5,10 @@ import unittest
 from configs import DatasetConfig, TrainingConfig
 from services.layout_evaluation_service import (
     InheritedModelCandidate,
+    LayoutCandidate,
     LayoutEvaluationRequest,
     best_layout_run,
-    build_standard_layout_candidates,
+    build_online_delta_layout_candidates,
     evaluate_inherited_models,
     run_layout_evaluation,
     with_inherited_model_evaluations,
@@ -15,31 +16,30 @@ from services.layout_evaluation_service import (
 
 
 class LayoutEvaluationServiceTests(unittest.TestCase):
-    def test_standard_candidates_include_sa_and_baselines_without_duplicates(self) -> None:
-        candidates = build_standard_layout_candidates(
-            (8,),
-            start_layout_spec="relu",
-            best_layout_spec="tanh",
-            end_layout_spec="gelu",
-            random_state=4,
+    def test_active_online_delta_candidates_only_compare_random_start_and_end(self) -> None:
+        candidates = build_online_delta_layout_candidates(
+            start_layout_spec="relu,gelu",
+            end_layout_spec="tanh,swish",
         )
 
-        labels = [candidate.label for candidate in candidates]
+        self.assertEqual(
+            [candidate.label for candidate in candidates],
+            ["random_start_layout", "end_sa_layout"],
+        )
 
-        self.assertIn("start_layout", labels)
-        self.assertIn("best_layout_from_sa", labels)
-        self.assertIn("end_layout_from_sa", labels)
-        self.assertIn("random_layout", labels)
-        self.assertIn("all_swish", labels)
-        self.assertEqual(len(labels), len(set(labels)))
+    def test_active_candidates_are_deduplicated(self) -> None:
+        candidates = build_online_delta_layout_candidates(
+            start_layout_spec="relu",
+            end_layout_spec="relu",
+        )
+
+        self.assertEqual([candidate.label for candidate in candidates], ["random_start_layout"])
 
     def test_layout_evaluation_ranks_layouts_under_identical_conditions(self) -> None:
-        candidates = build_standard_layout_candidates(
-            (8,),
-            start_layout_spec="relu",
-            best_layout_spec="tanh",
-            random_state=1,
-        )[:3]
+        candidates = (
+            LayoutCandidate("random_start_layout", "relu"),
+            LayoutCandidate("end_sa_layout", "tanh"),
+        )
         result = run_layout_evaluation(
             LayoutEvaluationRequest(
                 dataset_config=DatasetConfig(name="concentric_circles", random_state=1),
@@ -57,18 +57,16 @@ class LayoutEvaluationServiceTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(len(result.runs), 3)
-        self.assertEqual(len(result.aggregated), 3)
+        self.assertEqual(len(result.runs), 2)
+        self.assertEqual(len(result.aggregated), 2)
         self.assertEqual(result.ranking[0].ranking_score, min(item.ranking_score for item in result.aggregated))
         self.assertIsNotNone(best_layout_run(result, "validation_loss").model_state)
 
     def test_inherited_model_evaluation_is_combined_with_retrained_ranking(self) -> None:
-        candidates = build_standard_layout_candidates(
-            (8,),
-            start_layout_spec="relu",
-            best_layout_spec="tanh",
-            random_state=1,
-        )[:2]
+        candidates = (
+            LayoutCandidate("random_start_layout", "relu"),
+            LayoutCandidate("end_sa_layout", "tanh"),
+        )
         request = LayoutEvaluationRequest(
             dataset_config=DatasetConfig(name="concentric_circles", random_state=2),
             hidden_sizes=(8,),
@@ -88,7 +86,7 @@ class LayoutEvaluationServiceTests(unittest.TestCase):
             request.dataset_config,
             (
                 InheritedModelCandidate(
-                    "best_inherited_model_from_sa",
+                    "diagnostic_best_inherited_model_from_sa",
                     result.runs[0].model_state,
                     2,
                 ),
@@ -111,10 +109,7 @@ class LayoutEvaluationServiceTests(unittest.TestCase):
             LayoutEvaluationRequest(
                 dataset_config=DatasetConfig(name="two_moons", random_state=3),
                 hidden_sizes=(8,),
-                candidates=build_standard_layout_candidates(
-                    (8,),
-                    start_layout_spec="relu",
-                )[:1],
+                candidates=(LayoutCandidate("random_start_layout", "relu"),),
                 seeds=(3,),
                 training_config=TrainingConfig(
                     epochs=1,

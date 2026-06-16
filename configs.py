@@ -44,6 +44,7 @@ DEFAULT_WEIGHT_SCALE = 1.0
 DEFAULT_VALIDATION_SIZE = 0.2
 DEFAULT_TEST_SIZE = 0.2
 DEFAULT_NEIGHBOR_PREVIEW = 6
+DEFAULT_GUI_PROFILE = "methodical_selected_20260613"
 DEFAULT_ANNEALING_START_TEMPERATURE = 0.03
 DEFAULT_ANNEALING_COOLING_SCHEDULE = "geometric"
 DEFAULT_ANNEALING_COOLING_PARAMETER = 0.95
@@ -145,7 +146,7 @@ class GuiExperimentConfig:
     random_state: int = DEFAULT_RANDOM_SEED
     mode: str = "beginner"
     language: str = "de"
-    gui_profile: str = "demo"
+    gui_profile: str = DEFAULT_GUI_PROFILE
 
 
 def default_hidden_sizes(benchmark_name: str) -> tuple[int, ...]:

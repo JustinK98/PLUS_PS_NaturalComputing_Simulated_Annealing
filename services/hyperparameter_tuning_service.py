@@ -6,6 +6,7 @@ import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import itertools
 import json
 import math
@@ -18,11 +19,11 @@ import numpy as np
 
 from activations import parse_layout_spec, random_layout_spec, sample_set_neuron_neighbor
 from annealing import AnnealingConfig
+from annealing_schedules import SUPPORTED_COOLING_SCHEDULES
 from benchmark_registry import OFFICIAL_BENCHMARKS
 from benchmarks import load_benchmark
 from configs import (
     DEFAULT_ANNEALING_COOLING_SCHEDULE,
-    SUPPORTED_ACTIVATIONS,
     DatasetConfig,
     TrainingConfig,
     default_hidden_sizes,
@@ -37,6 +38,7 @@ from services.online_annealing_training_service import (
     online_run_to_completion,
 )
 from services.online_delta_reporting_service import build_online_delta_report
+from services.seed_schedule_service import SeedSchedule, build_seed_schedule
 from trainer import evaluate_batch, iterate_training_epochs, train_model, train_one_batch
 
 
@@ -45,6 +47,14 @@ PHASES = (
     "training-screen",
     "training-refine",
     "delta-probe",
+    "online-budget-probe",
+    "sa-screen",
+    "sa-refine",
+    "confirm",
+)
+ONLINE_PHASES = (
+    "delta-probe",
+    "online-budget-probe",
     "sa-screen",
     "sa-refine",
     "confirm",
@@ -63,6 +73,7 @@ class HyperparameterTuningRequest:
     resume: Path | None = None
     smoke: bool = False
     export_layout_frames: bool = False
+    import_training_from: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -82,7 +93,7 @@ def run_hyperparameter_tuning(
 
     if request.workers <= 0:
         raise ValueError("--workers muss positiv sein.")
-    if request.phase != "full" and request.phase not in PHASES:
+    if request.phase not in {"full", "online-full"} and request.phase not in PHASES:
         raise ValueError(f"Unbekannte Tuning-Phase '{request.phase}'.")
 
     config = _load_profile(request.profile, smoke=request.smoke)
@@ -94,7 +105,13 @@ def run_hyperparameter_tuning(
     root = _resolve_output_dir(request)
     root.mkdir(parents=True, exist_ok=True)
     (root / "selected").mkdir(parents=True, exist_ok=True)
-    phases = PHASES if request.phase == "full" else (request.phase,)
+    phases = (
+        PHASES
+        if request.phase == "full"
+        else ONLINE_PHASES
+        if request.phase == "online-full"
+        else (request.phase,)
+    )
     _write_json(
         root / "manifest.json",
         {
@@ -108,10 +125,15 @@ def run_hyperparameter_tuning(
             "validation_only_before_confirmation": True,
             "created_or_resumed_at": datetime.now().isoformat(timespec="seconds"),
             "config_path": str(CONFIG_PATH),
+            "import_training_from": (
+                str(request.import_training_from) if request.import_training_from is not None else None
+            ),
         },
     )
 
     for benchmark in benchmarks:
+        if request.import_training_from is not None:
+            _import_training_selection(root, request.import_training_from, benchmark)
         for phase in phases:
             _run_phase(
                 root,
@@ -148,6 +170,33 @@ def temperatures_for_target_acceptance(
     return tuple(temperatures)
 
 
+def _import_training_selection(root: Path, source_root: Path, benchmark: str) -> None:
+    """Reuse the unchanged SGD selection from a reviewed predecessor run."""
+
+    source_path = source_root / "selected" / f"{benchmark}.json"
+    if not source_path.exists():
+        raise ValueError(f"Fehlende importierbare Trainingsauswahl: {source_path}")
+    source_payload = json.loads(source_path.read_text(encoding="utf-8"))
+    training = source_payload.get("training")
+    if not isinstance(training, dict):
+        raise ValueError(f"{source_path} enthaelt keine Trainingsauswahl.")
+    expected_hidden_sizes = list(default_hidden_sizes(benchmark))
+    if training.get("benchmark") != benchmark or training.get("hidden_sizes") != expected_hidden_sizes:
+        raise ValueError(f"Trainingsauswahl in {source_path} passt nicht zu {benchmark}.")
+    _update_selected(root, benchmark, "training", dict(training))
+    provenance_dir = root / "provenance"
+    provenance_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        provenance_dir / f"{benchmark}_training_import.json",
+        {
+            "kind": "imported_training_selection",
+            "benchmark": benchmark,
+            "source": str(source_path),
+            "config_sha256": _config_sha256(training),
+        },
+    )
+
+
 def _run_phase(
     root: Path,
     config: dict[str, Any],
@@ -163,6 +212,8 @@ def _run_phase(
         _run_training_refine(root, config, benchmark, workers)
     elif phase == "delta-probe":
         _run_delta_probe(root, config, benchmark, workers)
+    elif phase == "online-budget-probe":
+        _run_online_budget_probe(root, config, benchmark, workers)
     elif phase == "sa-screen":
         _run_sa_screen(root, config, benchmark, workers)
     elif phase == "sa-refine":
@@ -271,33 +322,6 @@ def _run_training_refine(
         )
         selected["stop_rule"] = dict(stop_rule)
     _update_selected(root, benchmark, "training", selected)
-    _run_all_baseline_references(
-        phase_dir / "all_baseline",
-        top_confirmation,
-        tuple(range(int(profile["training_refine_confirmation_runs"]))),
-        workers,
-    )
-
-
-def _run_all_baseline_references(
-    phase_dir: Path,
-    configs: list[dict[str, Any]],
-    seeds: tuple[int, ...],
-    workers: int,
-) -> None:
-    references = [
-        {**config, "layout_spec": activation, "label": f"all_{activation}"}
-        for config, activation in itertools.product(configs, SUPPORTED_ACTIVATIONS)
-    ]
-    rows = _run_trials(
-        phase_dir,
-        references,
-        seeds,
-        _training_trial_worker,
-        workers,
-        phase="training-refine-all-baseline",
-    )
-    _write_csv(phase_dir / "ranking.csv", _rank_training(rows))
 
 
 def _run_delta_probe(
@@ -364,6 +388,90 @@ def _run_delta_probe(
     _update_selected(root, benchmark, "delta_probe", summary)
 
 
+def _run_online_budget_probe(
+    root: Path,
+    profile: dict[str, Any],
+    benchmark: str,
+    workers: int,
+) -> None:
+    """Find the smallest stable online-training budget before SA screening."""
+
+    training = _require_selected(root, benchmark, "training")
+    probe = _require_selected(root, benchmark, "delta_probe")
+    base_checkpoints = tuple(float(value) for value in profile["online_budget_probe_epochs"])
+    extended_checkpoints = tuple(float(value) for value in profile["online_budget_probe_extended_epochs"])
+    phase_dir = root / "online_budget_probe" / benchmark
+    target_rates = tuple(float(value) for value in probe["target_worse_acceptance_rates"])
+    temperatures = tuple(float(value) for value in probe["start_temperatures"])
+    representative_temperature = temperatures[min(range(len(target_rates)), key=lambda index: abs(target_rates[index] - 0.4))]
+
+    def configs_for(checkpoints: tuple[float, ...]) -> list[dict[str, Any]]:
+        return [
+            {
+                "benchmark": benchmark,
+                "hidden_sizes": list(default_hidden_sizes(benchmark)),
+                "epochs": int(training["epochs"]),
+                "retrain_learning_rate": float(training["learning_rate"]),
+                "retrain_batch_size": int(training["batch_size"]),
+                "weight_scale": float(training["weight_scale"]),
+                "online_learning_rate": float(training["learning_rate"]),
+                "online_batch_size": int(profile["online_budget_probe_batch_size"]),
+                "start_temperature": representative_temperature,
+                "cooling_schedule": DEFAULT_ANNEALING_COOLING_SCHEDULE,
+                "cooling_parameter": float(profile["online_budget_probe_cooling_parameter"]),
+                "iterations_per_temperature": int(profile["online_budget_probe_iterations_per_temperature"]),
+                "max_steps": _proposal_safety_limit(
+                    benchmark,
+                    int(profile["online_budget_probe_batch_size"]),
+                    float(max(checkpoints)),
+                ),
+                "min_temperature": 0.0,
+                "target_online_epochs": float(target_online_epochs),
+                "stop_at_target_online_epochs": True,
+            }
+            for target_online_epochs in checkpoints
+        ]
+
+    rows = _run_trials(
+        phase_dir,
+        configs_for(base_checkpoints),
+        tuple(range(int(profile["online_budget_probe_runs"]))),
+        _online_budget_probe_worker,
+        workers,
+        phase="online-budget-probe",
+    )
+    ranking = _rank_online_budget_probe(rows)
+    selected_budget = _select_online_budget(ranking)
+    if selected_budget is None and extended_checkpoints:
+        rows = _run_trials(
+            phase_dir,
+            configs_for(extended_checkpoints),
+            tuple(range(int(profile["online_budget_probe_runs"]))),
+            _online_budget_probe_worker,
+            workers,
+            phase="online-budget-probe",
+            existing_configs=configs_for(base_checkpoints),
+        )
+        ranking = _rank_online_budget_probe(rows)
+        selected_budget = _select_online_budget(ranking)
+    if selected_budget is None:
+        selected_budget = float(max((*base_checkpoints, *extended_checkpoints)))
+        plateau_status = "plateau_not_reached"
+    else:
+        plateau_status = "plateau_reached"
+    _write_csv(phase_dir / "ranking.csv", ranking)
+    _update_selected(
+        root,
+        benchmark,
+        "online_budget",
+        {
+            "target_online_epochs": selected_budget,
+            "plateau_status": plateau_status,
+            "ranking_path": str(phase_dir / "ranking.csv"),
+        },
+    )
+
+
 def _run_sa_screen(
     root: Path,
     profile: dict[str, Any],
@@ -372,40 +480,60 @@ def _run_sa_screen(
 ) -> None:
     training = _require_selected(root, benchmark, "training")
     probe = _require_selected(root, benchmark, "delta_probe")
+    online_budget = _require_selected(root, benchmark, "online_budget")
     benchmark_config = profile["benchmarks"][benchmark]
     diagnostic_only = training.get("stop_rule_passed") is False
-    product = [
-        {
-            "benchmark": benchmark,
-            "hidden_sizes": list(default_hidden_sizes(benchmark)),
-            "epochs": int(training["epochs"]),
-            "retrain_learning_rate": float(training["learning_rate"]),
-            "retrain_batch_size": int(training["batch_size"]),
-            "weight_scale": float(training["weight_scale"]),
-            "online_learning_rate": float(training["learning_rate"]) * float(lr_factor),
-            "online_batch_size": int(online_batch_size),
-            "start_temperature": float(start_temperature),
-            "cooling_parameter": float(cooling_parameter),
-            "iterations_per_temperature": int(iterations),
-            "max_steps": int(max_steps),
-            "min_temperature": 0.0,
-            "diagnostic_only": diagnostic_only,
-        }
-        for start_temperature, cooling_parameter, iterations, max_steps, lr_factor, online_batch_size
-        in itertools.product(
-            probe["start_temperatures"],
-            profile["cooling_parameters"],
-            profile["iterations_per_temperature"],
-            benchmark_config["max_steps"],
-            profile["online_learning_rate_factors"],
-            profile["online_batch_sizes"],
+    product: list[dict[str, Any]] = []
+    for start_temperature, iterations, lr_factor, online_batch_size in itertools.product(
+        probe["start_temperatures"],
+        profile["iterations_per_temperature"],
+        profile["online_learning_rate_factors"],
+        profile["online_batch_sizes"],
+    ):
+        max_steps = _proposal_safety_limit(
+            benchmark,
+            int(online_batch_size),
+            float(online_budget["target_online_epochs"]),
         )
-    ]
+        for cooling in _cooling_candidates(
+            profile,
+            start_temperature=float(start_temperature),
+            iterations_per_temperature=int(iterations),
+            max_steps=max_steps,
+        ):
+            product.append(
+                {
+                    "benchmark": benchmark,
+                    "hidden_sizes": list(default_hidden_sizes(benchmark)),
+                    "epochs": int(training["epochs"]),
+                    "retrain_learning_rate": float(training["learning_rate"]),
+                    "retrain_batch_size": int(training["batch_size"]),
+                    "weight_scale": float(training["weight_scale"]),
+                    "online_learning_rate": float(training["learning_rate"]) * float(lr_factor),
+                    "online_batch_size": int(online_batch_size),
+                    "start_temperature": float(start_temperature),
+                    **cooling,
+                    "iterations_per_temperature": int(iterations),
+                    "max_steps": max_steps,
+                    "min_temperature": float(start_temperature) * 0.01,
+                    "target_online_epochs": float(online_budget["target_online_epochs"]),
+                    "stop_at_target_online_epochs": False,
+                    "diagnostic_only": diagnostic_only,
+                }
+            )
     rng = np.random.default_rng(42)
     requested_candidates = 1 if diagnostic_only else int(benchmark_config["sa_screen_candidates"])
     sample_count = min(requested_candidates, len(product))
-    indices = rng.choice(len(product), size=sample_count, replace=False)
-    configs = [product[int(index)] for index in indices]
+    configs = (
+        [product[0]]
+        if diagnostic_only
+        else _stratified_sample_configs(
+            product,
+            sample_count,
+            group_key="cooling_schedule",
+            rng=rng,
+        )
+    )
     phase_dir = root / "sa" / benchmark / "screen"
     if diagnostic_only:
         _write_json(
@@ -460,10 +588,21 @@ def _run_confirmation(
     *,
     export_layout_frames: bool,
 ) -> None:
-    config = _require_selected(root, benchmark, "sa")
+    config = {
+        **_require_selected(root, benchmark, "sa"),
+        "confirmation_replicate_count": int(profile["confirmation_replicate_count"]),
+    }
     phase_dir = root / "confirmation" / benchmark
     phase_dir.mkdir(parents=True, exist_ok=True)
-    seeds = tuple(range(int(profile["confirmation_runs"])))
+    layout_count = int(profile["confirmation_layout_count"])
+    replicate_count = int(profile["confirmation_replicate_count"])
+    expected_runs = int(profile.get("confirmation_runs", layout_count * replicate_count))
+    if layout_count * replicate_count != expected_runs:
+        raise ValueError(
+            "confirmation_layout_count * confirmation_replicate_count muss "
+            "confirmation_runs entsprechen."
+        )
+    seeds = tuple(range(layout_count * replicate_count))
     online_rows = _run_confirmation_online(
         phase_dir,
         config,
@@ -471,41 +610,7 @@ def _run_confirmation(
         workers,
         export_layout_frames=export_layout_frames,
     )
-    baseline_configs = [
-        {
-            "benchmark": benchmark,
-            "hidden_sizes": list(default_hidden_sizes(benchmark)),
-            "epochs": int(config["epochs"]),
-            "learning_rate": float(config["retrain_learning_rate"]),
-            "batch_size": int(config["retrain_batch_size"]),
-            "weight_scale": float(config["weight_scale"]),
-        }
-    ]
-    random_rows = _run_trials(
-        phase_dir / "random_baseline",
-        baseline_configs,
-        seeds,
-        _full_training_trial_worker,
-        workers,
-        phase="confirm-random-baseline",
-    )
-    all_configs = [
-        {**baseline_configs[0], "layout_spec": activation, "label": f"all_{activation}"}
-        for activation in SUPPORTED_ACTIVATIONS
-    ]
-    all_rows = _run_trials(
-        phase_dir / "all_baseline",
-        all_configs,
-        seeds,
-        _full_training_trial_worker,
-        workers,
-        phase="confirm-all-baseline",
-    )
-    summary_rows = [
-        *_rank_confirmation_online(online_rows),
-        *_rank_training(random_rows),
-        *_rank_training(all_rows),
-    ]
+    summary_rows = _rank_confirmation_online(online_rows)
     _write_csv(phase_dir / "summary.csv", summary_rows)
     build_online_delta_report(phase_dir / "online_delta", phase_dir / "aggregate")
     _update_selected(
@@ -516,6 +621,8 @@ def _run_confirmation(
             "summary_path": str(phase_dir / "summary.csv"),
             "online_delta_report": str(phase_dir / "aggregate"),
             "runs": len(seeds),
+            "layout_count": layout_count,
+            "replicate_count": replicate_count,
             "diagnostic_only": bool(config.get("diagnostic_only", False)),
         },
     )
@@ -566,20 +673,19 @@ def _run_confirmation_online(
 
 
 def _training_trial_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
+    schedule = _tuning_seed_schedule(config, seed)
     return _train_layout(
         config,
         seed,
         include_test=False,
-        layout_spec=config.get("layout_spec"),
-    )
-
-
-def _full_training_trial_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
-    return _train_layout(
-        config,
-        seed,
-        include_test=True,
-        layout_spec=config.get("layout_spec"),
+        layout_spec=config.get("layout_spec")
+        or random_layout_spec(
+            tuple(int(value) for value in config["hidden_sizes"]),
+            schedule.layout_seed,
+        ),
+        data_split_seed=schedule.data_split_seed,
+        weight_seed=schedule.retraining_weight_seed,
+        batch_seed=schedule.retraining_batch_seed,
     )
 
 
@@ -589,11 +695,19 @@ def _train_layout(
     *,
     include_test: bool,
     layout_spec: str | None,
+    data_split_seed: int | None = None,
+    weight_seed: int | None = None,
+    batch_seed: int | None = None,
 ) -> dict[str, Any]:
     benchmark = str(config["benchmark"])
     hidden_sizes = tuple(int(value) for value in config["hidden_sizes"])
     effective_layout_spec = layout_spec or random_layout_spec(hidden_sizes, seed)
-    dataset = load_benchmark(DatasetConfig(name=benchmark, random_state=seed))
+    resolved_data_split_seed = seed if data_split_seed is None else data_split_seed
+    resolved_weight_seed = seed if weight_seed is None else weight_seed
+    resolved_batch_seed = seed if batch_seed is None else batch_seed
+    dataset = load_benchmark(
+        DatasetConfig(name=benchmark, random_state=resolved_data_split_seed)
+    )
     model = ModularMLP(
         input_size=dataset.input_size,
         hidden_sizes=hidden_sizes,
@@ -601,13 +715,13 @@ def _train_layout(
         layout=parse_layout_spec(effective_layout_spec, hidden_sizes),
         num_classes=dataset.output_size,
         weight_scale=float(config["weight_scale"]),
-        random_state=seed,
+        random_state=resolved_weight_seed,
     )
     training_config = TrainingConfig(
         epochs=int(config["epochs"]),
         learning_rate=float(config["learning_rate"]),
         batch_size=int(config["batch_size"]),
-        random_state=seed,
+        random_state=resolved_batch_seed,
     )
     if include_test:
         training_result = train_model(model, dataset, training_config)
@@ -641,8 +755,14 @@ def _train_layout(
 def _delta_probe_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
     benchmark = str(config["benchmark"])
     hidden_sizes = tuple(int(value) for value in config["hidden_sizes"])
-    dataset = load_benchmark(DatasetConfig(name=benchmark, random_state=seed))
-    start_layout = parse_layout_spec(random_layout_spec(hidden_sizes, seed), hidden_sizes)
+    schedule = _tuning_seed_schedule(config, seed)
+    dataset = load_benchmark(
+        DatasetConfig(name=benchmark, random_state=schedule.data_split_seed)
+    )
+    start_layout = parse_layout_spec(
+        random_layout_spec(hidden_sizes, schedule.layout_seed),
+        hidden_sizes,
+    )
     model = ModularMLP(
         input_size=dataset.input_size,
         hidden_sizes=hidden_sizes,
@@ -650,14 +770,14 @@ def _delta_probe_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
         layout=start_layout,
         num_classes=dataset.output_size,
         weight_scale=float(config["weight_scale"]),
-        random_state=seed,
+        random_state=schedule.online_weight_seed,
     )
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(schedule.sa_proposal_seed)
     cursor = MiniBatchCursor(
         train_size=dataset.train_size,
         batch_size=int(config["batch_size"]),
         shuffle=True,
-        rng=np.random.default_rng(seed),
+        rng=np.random.default_rng(schedule.online_batch_seed),
     )
     deltas: list[float] = []
     for _ in range(int(config["probe_steps"])):
@@ -681,12 +801,28 @@ def _delta_probe_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
 
 
 def _sa_search_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
-    result, _snapshot = _run_sa(config, seed, include_test=False)
+    result, _snapshot = _run_sa(
+        config,
+        seed,
+        include_test=False,
+        schedule=_tuning_seed_schedule(config, seed),
+    )
+    return result
+
+
+def _online_budget_probe_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
+    result, _snapshot = _run_sa(
+        config,
+        seed,
+        include_test=False,
+        schedule=_tuning_seed_schedule(config, seed),
+    )
     return result
 
 
 def _sa_refine_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
-    result, snapshot = _run_sa(config, seed, include_test=False)
+    schedule = _tuning_seed_schedule(config, seed)
+    result, snapshot = _run_sa(config, seed, include_test=False, schedule=schedule)
     start = _train_layout(
         {
             "benchmark": config["benchmark"],
@@ -699,8 +835,11 @@ def _sa_refine_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
         seed,
         include_test=False,
         layout_spec=snapshot.start_evaluation.layout.to_compact_spec(),  # type: ignore[union-attr]
+        data_split_seed=schedule.data_split_seed,
+        weight_seed=schedule.retraining_weight_seed,
+        batch_seed=schedule.retraining_batch_seed,
     )
-    best = _train_layout(
+    end = _train_layout(
         {
             "benchmark": config["benchmark"],
             "hidden_sizes": config["hidden_sizes"],
@@ -711,14 +850,17 @@ def _sa_refine_worker(config: dict[str, Any], seed: int) -> dict[str, Any]:
         },
         seed,
         include_test=False,
-        layout_spec=snapshot.best_evaluation.layout.to_compact_spec(),  # type: ignore[union-attr]
+        layout_spec=snapshot.current_evaluation.layout.to_compact_spec(),  # type: ignore[union-attr]
+        data_split_seed=schedule.data_split_seed,
+        weight_seed=schedule.retraining_weight_seed,
+        batch_seed=schedule.retraining_batch_seed,
     )
     return {
         **result,
         "same_random_start_retrained_val_loss": float(start["val_loss"]),
-        "best_layout_from_sa_retrained_val_loss": float(best["val_loss"]),
-        "paired_val_loss_improvement": float(start["val_loss"]) - float(best["val_loss"]),
-        "paired_win": float(best["val_loss"]) < float(start["val_loss"]),
+        "end_layout_from_sa_retrained_val_loss": float(end["val_loss"]),
+        "paired_val_loss_improvement": float(start["val_loss"]) - float(end["val_loss"]),
+        "paired_win": float(end["val_loss"]) < float(start["val_loss"]),
     }
 
 
@@ -726,7 +868,14 @@ def _confirmation_online_worker(
     config: dict[str, Any],
     seed: int,
 ) -> tuple[dict[str, Any], OnlineAnnealingSnapshot, dict[str, Any]]:
-    result, snapshot = _run_sa(config, seed, include_test=True)
+    replicate_count = int(config.get("confirmation_replicate_count", 3))
+    layout_index, replicate_index = divmod(seed, replicate_count)
+    schedule = build_seed_schedule(
+        str(config["benchmark"]),
+        layout_index,
+        replicate_index,
+    )
+    result, snapshot = _run_sa(config, seed, include_test=True, schedule=schedule)
     base = {
         "benchmark": config["benchmark"],
         "hidden_sizes": config["hidden_sizes"],
@@ -738,64 +887,106 @@ def _confirmation_online_worker(
     comparisons = []
     for label, layout_spec in (
         ("same_random_start_retrained", snapshot.start_evaluation.layout.to_compact_spec()),  # type: ignore[union-attr]
-        ("best_layout_from_sa_retrained", snapshot.best_evaluation.layout.to_compact_spec()),  # type: ignore[union-attr]
         ("end_layout_from_sa_retrained", snapshot.current_evaluation.layout.to_compact_spec()),  # type: ignore[union-attr]
     ):
         comparisons.append(
             {
-                **_train_layout(base, seed, include_test=True, layout_spec=layout_spec),
+                **_train_layout(
+                    base,
+                    seed,
+                    include_test=True,
+                    layout_spec=layout_spec,
+                    data_split_seed=schedule.data_split_seed,
+                    weight_seed=schedule.retraining_weight_seed,
+                    batch_seed=schedule.retraining_batch_seed,
+                ),
                 "label": label,
             }
         )
-    for label, evaluation in (
-        ("best_inherited_model_from_sa", snapshot.best_evaluation),
-        ("end_inherited_model_from_sa", snapshot.current_evaluation),
-    ):
-        comparisons.append(
-            {
-                "label": label,
-                "evaluation_type": "inherited",
-                "layout_spec": evaluation.layout.to_compact_spec(),  # type: ignore[union-attr]
-                "train_loss": float(evaluation.train_loss),  # type: ignore[union-attr]
-                "val_loss": float(evaluation.val_loss),  # type: ignore[union-attr]
-                "test_loss": float(evaluation.test_loss),  # type: ignore[union-attr]
-                "train_accuracy": float(evaluation.train_accuracy),  # type: ignore[union-attr]
-                "val_accuracy": float(evaluation.val_accuracy),  # type: ignore[union-attr]
-                "test_accuracy": float(evaluation.test_accuracy),  # type: ignore[union-attr]
-            }
-        )
-    best_comparison = next(item for item in comparisons if item["label"] == "best_layout_from_sa_retrained")
+    inherited_metrics = _evaluate_inherited_model(
+        snapshot.best_evaluation,
+        config,
+        schedule.data_split_seed,
+    )
+    comparisons.append(
+        {
+            "label": "best_online_delta_value",
+            "evaluation_type": "inherited",
+            "layout_spec": snapshot.best_evaluation.layout.to_compact_spec(),
+            **inherited_metrics,
+        }
+    )
+    end_comparison = next(item for item in comparisons if item["label"] == "end_layout_from_sa_retrained")
     start_comparison = next(item for item in comparisons if item["label"] == "same_random_start_retrained")
     result.update(
         {
+            "layout_index": layout_index,
+            "replicate_index": replicate_index,
+            "layout_seed": schedule.layout_seed,
+            "data_split_seed": schedule.data_split_seed,
+            "online_weight_seed": schedule.online_weight_seed,
+            "online_batch_seed": schedule.online_batch_seed,
+            "sa_proposal_seed": schedule.sa_proposal_seed,
+            "sa_acceptance_seed": schedule.sa_acceptance_seed,
+            "retraining_weight_seed": schedule.retraining_weight_seed,
+            "retraining_batch_seed": schedule.retraining_batch_seed,
             "same_random_start_retrained_val_loss": float(start_comparison["val_loss"]),
-            "best_layout_from_sa_retrained_val_loss": float(best_comparison["val_loss"]),
-            "best_layout_from_sa_retrained_test_loss": float(best_comparison["test_loss"]),
-            "best_layout_from_sa_retrained_test_accuracy": float(best_comparison["test_accuracy"]),
-            "paired_val_loss_improvement": float(start_comparison["val_loss"]) - float(best_comparison["val_loss"]),
-            "paired_win": float(best_comparison["val_loss"]) < float(start_comparison["val_loss"]),
+            "end_layout_from_sa_retrained_val_loss": float(end_comparison["val_loss"]),
+            "end_layout_from_sa_retrained_test_loss": float(end_comparison["test_loss"]),
+            "end_layout_from_sa_retrained_test_accuracy": float(end_comparison["test_accuracy"]),
+            "paired_val_loss_improvement": float(start_comparison["val_loss"]) - float(end_comparison["val_loss"]),
+            "paired_win": float(end_comparison["val_loss"]) < float(start_comparison["val_loss"]),
         }
     )
     payload = {
         "kind": "experiment_suite_online_delta_run",
+        "schema_version": 2,
         "experiment_id": "tuning_confirmation_online_delta",
         "benchmark": config["benchmark"],
         "run_index": seed,
+        "run_id": schedule.run_id,
+        "layout_index": layout_index,
+        "replicate_index": replicate_index,
+        "seeds": schedule.to_dict(),
         "seed": seed,
-        "training_seed": seed,
-        "layout_seed": seed,
+        "training_seed": schedule.retraining_weight_seed,
+        "layout_seed": schedule.layout_seed,
         "learning_rate": config["retrain_learning_rate"],
         "online_learning_rate": config["online_learning_rate"],
         "online_batch_size": config["online_batch_size"],
         "start_layout": snapshot.start_evaluation.layout.to_compact_spec(),  # type: ignore[union-attr]
-        "best_layout": snapshot.best_evaluation.layout.to_compact_spec(),  # type: ignore[union-attr]
+        "diagnostic_best_layout": snapshot.best_evaluation.layout.to_compact_spec(),  # type: ignore[union-attr]
         "end_layout": snapshot.current_evaluation.layout.to_compact_spec(),  # type: ignore[union-attr]
         "accepted_steps": snapshot.accepted_steps,
+        "trained_batch_updates": snapshot.trained_batch_updates,
+        "effective_online_epochs": snapshot.effective_online_epochs,
         "acceptance_rate": snapshot.acceptance_rate,
         "online_history": _snapshot_history(snapshot),
         "final_comparisons": comparisons,
     }
     return result, snapshot, payload
+
+
+def _evaluate_inherited_model(
+    evaluation,
+    config: dict[str, Any],
+    seed: int,
+) -> dict[str, float]:
+    """Evaluate one final inherited model once, including the held-out test split."""
+
+    dataset = load_benchmark(DatasetConfig(name=str(config["benchmark"]), random_state=seed))
+    model = evaluation.trained_model
+    train_loss, train_accuracy = model.evaluate(dataset.X_train, dataset.y_train)
+    val_loss, val_accuracy = model.evaluate(dataset.X_val, dataset.y_val)
+    test_loss, test_accuracy = model.evaluate(dataset.X_test, dataset.y_test)
+    return {
+        "train_loss": float(train_loss),
+        "val_loss": float(val_loss),
+        "test_loss": float(test_loss),
+        "train_accuracy": float(train_accuracy),
+        "val_accuracy": float(val_accuracy),
+        "test_accuracy": float(test_accuracy),
+    }
 
 
 def _timed_confirmation_online_worker(
@@ -812,22 +1003,32 @@ def _run_sa(
     seed: int,
     *,
     include_test: bool,
+    schedule: SeedSchedule | None = None,
 ) -> tuple[dict[str, Any], OnlineAnnealingSnapshot]:
     hidden_sizes = tuple(int(value) for value in config["hidden_sizes"])
+    data_split_seed = seed if schedule is None else schedule.data_split_seed
+    layout_seed = seed if schedule is None else schedule.layout_seed
+    online_weight_seed = seed if schedule is None else schedule.online_weight_seed
+    online_batch_seed = seed if schedule is None else schedule.online_batch_seed
     session = create_online_session(
         OnlineAnnealingRequest(
-            dataset_config=DatasetConfig(name=str(config["benchmark"]), random_state=seed),
+            dataset_config=DatasetConfig(
+                name=str(config["benchmark"]),
+                random_state=data_split_seed,
+            ),
             hidden_sizes=hidden_sizes,
-            layout_spec=random_layout_spec(hidden_sizes, seed),
+            layout_spec=random_layout_spec(hidden_sizes, layout_seed),
             training_config=TrainingConfig(
                 epochs=int(config["epochs"]),
                 learning_rate=float(config["online_learning_rate"]),
                 batch_size=int(config["online_batch_size"]),
-                random_state=seed,
+                random_state=online_batch_seed,
             ),
             annealing_config=AnnealingConfig(
                 start_temperature=float(config["start_temperature"]),
-                cooling_schedule=DEFAULT_ANNEALING_COOLING_SCHEDULE,
+                cooling_schedule=str(
+                    config.get("cooling_schedule", DEFAULT_ANNEALING_COOLING_SCHEDULE)
+                ),
                 cooling_parameter=float(config["cooling_parameter"]),
                 iterations_per_temperature=int(config["iterations_per_temperature"]),
                 max_steps=int(config["max_steps"]),
@@ -835,8 +1036,19 @@ def _run_sa(
                 neighborhood_operations=("set_neuron",),
             ),
             weight_scale=float(config["weight_scale"]),
-            random_state=seed,
-            include_test_metrics=include_test,
+            random_state=online_weight_seed,
+            weight_seed=online_weight_seed,
+            batch_seed=online_batch_seed,
+            proposal_seed=None if schedule is None else schedule.sa_proposal_seed,
+            acceptance_seed=None if schedule is None else schedule.sa_acceptance_seed,
+            target_online_epochs=(
+                float(config["target_online_epochs"])
+                if "target_online_epochs" in config
+                else None
+            ),
+            stop_at_target_online_epochs=bool(
+                config.get("stop_at_target_online_epochs", False)
+            ),
         )
     )
     snapshot = online_run_to_completion(session, "en")
@@ -850,10 +1062,12 @@ def _run_sa(
         {
             "acceptance_rate": float(snapshot.acceptance_rate),
             "start_val_loss": start_val,
-            "best_observed_val_loss": best_val,
+            "diagnostic_best_observed_val_loss": best_val,
             "end_val_loss": end_val,
-            "progress_improvement": start_val - best_val,
+            "end_progress_improvement": start_val - end_val,
             "step_count": len(snapshot.history),
+            "trained_batch_updates": snapshot.trained_batch_updates,
+            "effective_online_epochs": snapshot.effective_online_epochs,
             "finite_metrics": finite,
         },
         snapshot,
@@ -876,6 +1090,10 @@ def _snapshot_history(snapshot: OnlineAnnealingSnapshot) -> list[dict[str, Any]]
                 "neighbor_label": "start",
                 "batch_loss_before": float(start.objective_value),
                 "candidate_loss_after": float(start.objective_value),
+                "post_training_batch_loss": float(start.objective_value),
+                "trained_batch_updates_after_step": 0,
+                "effective_online_epochs_after_step": 0.0,
+                "diagnostics_refreshed": True,
                 "validation_loss_after_update": float(start.val_loss),
             }
         )
@@ -891,6 +1109,10 @@ def _snapshot_history(snapshot: OnlineAnnealingSnapshot) -> list[dict[str, Any]]
             "neighbor_label": step.neighbor_label,
             "batch_loss_before": float(step.batch_loss_before),
             "candidate_loss_after": float(step.candidate_loss_after),
+            "post_training_batch_loss": float(step.post_training_batch_loss),
+            "trained_batch_updates_after_step": int(step.trained_batch_updates_after_step),
+            "effective_online_epochs_after_step": float(step.effective_online_epochs_after_step),
+            "diagnostics_refreshed": bool(step.diagnostics_refreshed),
             "validation_loss_after_update": float(step.validation_loss_after_update),
         }
         for step in snapshot.history
@@ -994,26 +1216,72 @@ def _rank_training(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     )
 
 
+def _rank_online_budget_probe(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    ranking = _rank_rows(
+        rows,
+        metric_names=(
+            "end_val_loss",
+            "acceptance_rate",
+            "effective_online_epochs",
+            "step_count",
+        ),
+        sort_key=lambda row: float(json.loads(row["config_json"])["target_online_epochs"]),
+    )
+    for row in ranking:
+        row["target_online_epochs"] = float(json.loads(row["config_json"])["target_online_epochs"])
+    return sorted(ranking, key=lambda row: float(row["target_online_epochs"]))
+
+
+def _select_online_budget(ranking: list[dict[str, Any]]) -> float | None:
+    """Select the first checkpoint followed by two sub-one-percent improvements."""
+
+    if len(ranking) < 3:
+        return None
+    for index in range(len(ranking) - 2):
+        current = ranking[index]
+        next_row = ranking[index + 1]
+        after_next = ranking[index + 2]
+        target = float(current["target_online_epochs"])
+        if target < 25.0:
+            continue
+        current_loss = float(current["mean_end_val_loss"])
+        next_loss = float(next_row["mean_end_val_loss"])
+        after_next_loss = float(after_next["mean_end_val_loss"])
+        first_improvement = (current_loss - next_loss) / max(abs(current_loss), 1e-12)
+        second_improvement = (next_loss - after_next_loss) / max(abs(next_loss), 1e-12)
+        if first_improvement < 0.01 and second_improvement < 0.01:
+            return target
+    return None
+
+
 def _rank_sa_screen(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     ranking = _rank_rows(
         rows,
-        metric_names=("acceptance_rate", "best_observed_val_loss", "progress_improvement", "finite_metrics"),
+        metric_names=(
+            "acceptance_rate",
+            "end_val_loss",
+            "end_progress_improvement",
+            "effective_online_epochs",
+            "finite_metrics",
+        ),
         sort_key=lambda row: (
-            float(row["mean_best_observed_val_loss"]),
-            -float(row["mean_progress_improvement"]),
+            float(row["mean_end_val_loss"]),
+            -float(row["mean_end_progress_improvement"]),
         ),
     )
     for row in ranking:
         acceptance = float(row["mean_acceptance_rate"])
-        progress = float(row["mean_progress_improvement"])
+        progress = float(row["mean_end_progress_improvement"])
+        target_online_epochs = float(json.loads(row["config_json"]).get("target_online_epochs", 0.0))
+        trained_enough = float(row["mean_effective_online_epochs"]) >= target_online_epochs
         finite = float(row["mean_finite_metrics"]) == 1.0
-        row["healthy"] = 0.15 <= acceptance <= 0.80 and progress > 0.0 and finite
+        row["healthy"] = 0.15 <= acceptance <= 0.80 and progress > 0.0 and trained_enough and finite
     return sorted(
         ranking,
         key=lambda row: (
             not bool(row["healthy"]),
-            float(row["mean_best_observed_val_loss"]),
-            -float(row["mean_progress_improvement"]),
+            float(row["mean_end_val_loss"]),
+            -float(row["mean_end_progress_improvement"]),
         ),
     )
 
@@ -1023,12 +1291,12 @@ def _rank_sa_refine(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
         rows,
         metric_names=(
             "acceptance_rate",
-            "best_layout_from_sa_retrained_val_loss",
+            "end_layout_from_sa_retrained_val_loss",
             "paired_val_loss_improvement",
             "paired_win",
         ),
         sort_key=lambda row: (
-            float(row["mean_best_layout_from_sa_retrained_val_loss"]),
+            float(row["mean_end_layout_from_sa_retrained_val_loss"]),
             -float(row["mean_paired_val_loss_improvement"]),
             -float(row["mean_paired_win"]),
         ),
@@ -1043,13 +1311,13 @@ def _rank_confirmation_online(rows: list[dict[str, str]]) -> list[dict[str, Any]
         rows,
         metric_names=(
             "acceptance_rate",
-            "best_layout_from_sa_retrained_val_loss",
-            "best_layout_from_sa_retrained_test_loss",
-            "best_layout_from_sa_retrained_test_accuracy",
+            "end_layout_from_sa_retrained_val_loss",
+            "end_layout_from_sa_retrained_test_loss",
+            "end_layout_from_sa_retrained_test_accuracy",
             "paired_val_loss_improvement",
             "paired_win",
         ),
-        sort_key=lambda row: float(row["mean_best_layout_from_sa_retrained_val_loss"]),
+        sort_key=lambda row: float(row["mean_end_layout_from_sa_retrained_val_loss"]),
     )
 
 
@@ -1138,6 +1406,7 @@ def _write_tuning_summary(
                 "benchmark": benchmark,
                 "training_json": json.dumps(payload.get("training", {}), sort_keys=True),
                 "delta_probe_json": json.dumps(payload.get("delta_probe", {}), sort_keys=True),
+                "online_budget_json": json.dumps(payload.get("online_budget", {}), sort_keys=True),
                 "sa_json": json.dumps(payload.get("sa", {}), sort_keys=True),
                 "confirmation_json": json.dumps(payload.get("confirmation", {}), sort_keys=True),
             }
@@ -1147,10 +1416,20 @@ def _write_tuning_summary(
 
 def _load_profile(profile_name: str, *, smoke: bool) -> dict[str, Any]:
     payload = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    try:
-        profile = dict(payload["profiles"][profile_name])
-    except KeyError as exc:
-        raise ValueError(f"Unbekanntes Tuning-Profil '{profile_name}'.") from exc
+
+    def resolve(name: str, trail: tuple[str, ...] = ()) -> dict[str, Any]:
+        if name in trail:
+            raise ValueError(f"Zyklische Tuning-Profil-Vererbung: {' -> '.join((*trail, name))}")
+        try:
+            resolved = dict(payload["profiles"][name])
+        except KeyError as exc:
+            raise ValueError(f"Unbekanntes Tuning-Profil '{name}'.") from exc
+        inherited = resolved.pop("inherits", None)
+        if inherited is None:
+            return resolved
+        return {**resolve(str(inherited), (*trail, name)), **resolved}
+
+    profile = resolve(profile_name)
     if not smoke:
         return profile
     profile.update(
@@ -1162,10 +1441,16 @@ def _load_profile(profile_name: str, *, smoke: bool) -> dict[str, Any]:
             "training_refine_top_confirmation": 1,
             "delta_probe_runs": 1,
             "delta_probe_steps": 2,
+            "online_budget_probe_runs": 1,
+            "online_budget_probe_epochs": [0.05, 0.1, 0.2],
+            "online_budget_probe_extended_epochs": [],
+            "online_budget_probe_batch_size": 32,
             "sa_screen_runs": 1,
             "sa_refine_runs": 1,
             "sa_refine_top": 1,
             "confirmation_runs": 1,
+            "confirmation_layout_count": 1,
+            "confirmation_replicate_count": 1,
             "target_worse_acceptance_rates": [0.4],
             "batch_sizes": [32],
             "weight_scales": [1.0],
@@ -1175,13 +1460,16 @@ def _load_profile(profile_name: str, *, smoke: bool) -> dict[str, Any]:
             "online_batch_sizes": [32],
         }
     )
+    if "cooling_end_ratios" in profile:
+        profile["cooling_end_ratios"] = [profile["cooling_end_ratios"][0]]
+    smoke_sa_candidates = len(profile.get("cooling_schedules", ())) or 1
     profile["benchmarks"] = {
         benchmark: {
             **values,
             "learning_rates": [values["learning_rates"][0]],
             "epochs": [1],
             "max_steps": [2],
-            "sa_screen_candidates": 1,
+            "sa_screen_candidates": smoke_sa_candidates,
         }
         for benchmark, values in profile["benchmarks"].items()
     }
@@ -1206,6 +1494,104 @@ def _deduplicate_configs(configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             seen.add(key)
             result.append(config)
     return result
+
+
+def _proposal_safety_limit(benchmark: str, batch_size: int, target_online_epochs: float) -> int:
+    """Allow enough proposals to reach the training target at ten-percent acceptance."""
+
+    dataset = load_benchmark(DatasetConfig(name=benchmark, random_state=0))
+    required_updates = math.ceil(target_online_epochs * dataset.train_size / batch_size)
+    return max(1, math.ceil(required_updates / 0.10))
+
+
+def _tuning_seed_schedule(config: dict[str, Any], seed: int) -> SeedSchedule:
+    """Map a tuning replicate to independent, paired random streams."""
+
+    return build_seed_schedule(str(config["benchmark"]), seed, 0)
+
+
+def _cooling_candidates(
+    profile: dict[str, Any],
+    *,
+    start_temperature: float,
+    iterations_per_temperature: int,
+    max_steps: int,
+) -> list[dict[str, float | str]]:
+    """Build comparable cooling candidates with a shared target end ratio."""
+
+    end_ratios = profile.get("cooling_end_ratios")
+    if not isinstance(end_ratios, list):
+        return [
+            {
+                "cooling_schedule": DEFAULT_ANNEALING_COOLING_SCHEDULE,
+                "cooling_parameter": float(parameter),
+            }
+            for parameter in profile["cooling_parameters"]
+        ]
+
+    schedules = tuple(str(value) for value in profile.get("cooling_schedules", ()))
+    if not schedules:
+        raise ValueError("cooling_schedules darf fuer normalisiertes Cooling nicht leer sein.")
+    unsupported = sorted(set(schedules) - set(SUPPORTED_COOLING_SCHEDULES))
+    if unsupported:
+        raise ValueError(f"Nicht unterstuetzte Cooling-Schedules: {', '.join(unsupported)}")
+
+    cooling_step_index = max(1, (int(max_steps) - 1) // int(iterations_per_temperature))
+    candidates: list[dict[str, float | str]] = []
+    for schedule, raw_ratio in itertools.product(schedules, end_ratios):
+        ratio = float(raw_ratio)
+        if not 0.0 < ratio < 1.0:
+            raise ValueError("cooling_end_ratios muessen zwischen 0 und 1 liegen.")
+        if schedule == "geometric":
+            parameter = ratio ** (1.0 / cooling_step_index)
+        elif schedule == "linear":
+            parameter = start_temperature * (1.0 - ratio) / cooling_step_index
+        else:
+            parameter = (1.0 / ratio - 1.0) / math.log1p(cooling_step_index)
+        candidates.append(
+            {
+                "cooling_schedule": schedule,
+                "cooling_parameter": float(parameter),
+                "cooling_target_end_ratio": ratio,
+            }
+        )
+    return candidates
+
+
+def _stratified_sample_configs(
+    configs: list[dict[str, Any]],
+    sample_count: int,
+    *,
+    group_key: str,
+    rng: np.random.Generator,
+) -> list[dict[str, Any]]:
+    """Sample configurations while guaranteeing representation of each group."""
+
+    if sample_count >= len(configs):
+        return list(configs)
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for config in configs:
+        groups.setdefault(str(config.get(group_key, "")), []).append(config)
+    if sample_count < len(groups):
+        raise ValueError(
+            f"sa_screen_candidates muss mindestens {len(groups)} sein, "
+            f"um alle {group_key}-Werte abzudecken."
+        )
+
+    selected: list[dict[str, Any]] = []
+    group_items = sorted(groups.items())
+    base_count, remainder = divmod(sample_count, len(group_items))
+    for group_index, (_group, group_configs) in enumerate(group_items):
+        count = base_count + (1 if group_index < remainder else 0)
+        indices = rng.choice(len(group_configs), size=count, replace=False)
+        selected.extend(group_configs[int(index)] for index in indices)
+    rng.shuffle(selected)
+    return selected
+
+
+def _config_sha256(payload: object) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:

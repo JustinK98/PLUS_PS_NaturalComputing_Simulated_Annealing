@@ -1,0 +1,20 @@
+Slide 6: Open questions
+
+Questions we can discuss:
+
+- Does Online-Delta-SA improve over the matched random baseline?
+
+- Is the improvement caused by the found layout, or mainly by the inherited training path?
+
+- Do the best layouts show similar activation-function patterns?
+
+- Which activation functions occur most often in good layouts?
+
+- Are the SA parameters numerically healthy?
+  For example: acceptance rate, temperature schedule, and number of steps.
+
+- Does the method behave similarly across all benchmarks,
+  or only on easier benchmarks such as two_moons?
+
+- For difficult benchmarks, is the limitation caused by SA,
+  the optimizer, the fixed topology, or the benchmark itself?

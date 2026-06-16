@@ -6,9 +6,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from activations import parse_layout_spec, random_layout_spec
+from activations import parse_layout_spec
 from benchmarks import load_benchmark
-from configs import DatasetConfig, TrainingConfig, SUPPORTED_ACTIVATIONS
+from configs import DatasetConfig, TrainingConfig
 from model import ModularMLP
 from trainer import train_model
 
@@ -70,6 +70,9 @@ class LayoutEvaluationRequest:
     weight_scale: float
     primary_metric: str = "validation_loss"
     include_test_metrics: bool = True
+    data_split_seeds: tuple[int, ...] | None = None
+    weight_seeds: tuple[int, ...] | None = None
+    batch_seeds: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -83,29 +86,16 @@ class LayoutEvaluationResult:
     combined_ranking: tuple[AggregatedLayoutEvaluation, ...] = ()
 
 
-def build_standard_layout_candidates(
-    hidden_sizes: tuple[int, ...],
+def build_online_delta_layout_candidates(
     *,
     start_layout_spec: str,
-    best_layout_spec: str | None = None,
-    end_layout_spec: str | None = None,
-    random_state: int = 42,
+    end_layout_spec: str | None,
 ) -> tuple[LayoutCandidate, ...]:
-    """Erzeugt die Standard-Baselines fuer die finale Layout-Auswertung."""
+    """Build the active Random-Start versus final-SA-layout comparison."""
 
-    candidates: list[LayoutCandidate] = [LayoutCandidate("start_layout", start_layout_spec)]
-    if best_layout_spec is not None:
-        candidates.append(LayoutCandidate("best_layout_from_sa", best_layout_spec))
-    if end_layout_spec is not None and end_layout_spec != best_layout_spec:
-        candidates.append(LayoutCandidate("end_layout_from_sa", end_layout_spec))
-    candidates.append(
-        LayoutCandidate(
-            "random_layout",
-            random_layout_spec(hidden_sizes, random_state),
-        )
-    )
-    for activation_name in SUPPORTED_ACTIVATIONS:
-        candidates.append(LayoutCandidate(f"all_{activation_name}", activation_name))
+    candidates = [LayoutCandidate("random_start_layout", start_layout_spec)]
+    if end_layout_spec is not None and end_layout_spec != start_layout_spec:
+        candidates.append(LayoutCandidate("end_sa_layout", end_layout_spec))
     return _deduplicate_candidates(tuple(candidates))
 
 
@@ -120,13 +110,20 @@ def run_layout_evaluation(request: LayoutEvaluationRequest) -> LayoutEvaluationR
         raise ValueError("primary_metric muss validation_loss oder validation_accuracy sein.")
 
     runs: list[LayoutEvaluationRun] = []
-    for seed in request.seeds:
+    _validate_optional_seed_stream(request.data_split_seeds, request.seeds, "data_split_seeds")
+    _validate_optional_seed_stream(request.weight_seeds, request.seeds, "weight_seeds")
+    _validate_optional_seed_stream(request.batch_seeds, request.seeds, "batch_seeds")
+
+    for run_index, seed in enumerate(request.seeds):
+        data_split_seed = _seed_at(request.data_split_seeds, run_index, seed)
+        weight_seed = _seed_at(request.weight_seeds, run_index, seed)
+        batch_seed = _seed_at(request.batch_seeds, run_index, seed)
         dataset = load_benchmark(
             DatasetConfig(
                 name=request.dataset_config.name,
                 validation_size=request.dataset_config.validation_size,
                 test_size=request.dataset_config.test_size,
-                random_state=int(seed),
+                random_state=data_split_seed,
             )
         )
         for candidate in request.candidates:
@@ -138,13 +135,13 @@ def run_layout_evaluation(request: LayoutEvaluationRequest) -> LayoutEvaluationR
                 layout=layout,
                 num_classes=dataset.output_size,
                 weight_scale=request.weight_scale,
-                random_state=int(seed),
+                random_state=weight_seed,
             )
             training_config = TrainingConfig(
                 epochs=request.training_config.epochs,
                 learning_rate=request.training_config.learning_rate,
                 batch_size=request.training_config.batch_size,
-                random_state=int(seed),
+                random_state=batch_seed,
                 shuffle=request.training_config.shuffle,
             )
             training_result = train_model(
@@ -170,7 +167,7 @@ def run_layout_evaluation(request: LayoutEvaluationRequest) -> LayoutEvaluationR
                 LayoutEvaluationRun(
                     label=candidate.label,
                     layout_spec=layout.to_compact_spec(),
-                    seed=int(seed),
+                    seed=weight_seed,
                     metrics=metrics,
                     history=training_result.history,
                     model_state=model.to_state_dict(),
@@ -252,83 +249,6 @@ def with_inherited_model_evaluations(
         inherited_runs=inherited_runs,
         combined_ranking=combined_ranking,
     )
-
-
-def layout_evaluation_to_dict(result: LayoutEvaluationResult) -> dict[str, object]:
-    """Serialisiert einen Layout-Vergleich inklusive trainierter Modellzustaende."""
-
-    return {
-        "runs": [
-            {
-                "label": run.label,
-                "evaluation_type": run.evaluation_type,
-                "layout_spec": run.layout_spec,
-                "seed": run.seed,
-                "metrics": run.metrics,
-                "history": run.history,
-                "model_state": run.model_state,
-            }
-            for run in result.runs
-        ],
-        "retrained_runs": [
-            {
-                "label": run.label,
-                "evaluation_type": run.evaluation_type,
-                "layout_spec": run.layout_spec,
-                "seed": run.seed,
-                "metrics": run.metrics,
-                "history": run.history,
-                "model_state": run.model_state,
-            }
-            for run in result.runs
-        ],
-        "inherited_runs": [
-            {
-                "label": run.label,
-                "evaluation_type": run.evaluation_type,
-                "layout_spec": run.layout_spec,
-                "seed": run.seed,
-                "metrics": run.metrics,
-                "history": run.history,
-                "model_state": run.model_state,
-            }
-            for run in result.inherited_runs
-        ],
-        "aggregated": [
-            {
-                "label": item.label,
-                "evaluation_type": item.evaluation_type,
-                "layout_spec": item.layout_spec,
-                "num_runs": item.num_runs,
-                "mean_metrics": item.mean_metrics,
-                "std_metrics": item.std_metrics,
-                "min_metrics": item.min_metrics,
-                "max_metrics": item.max_metrics,
-                "ranking_score": item.ranking_score,
-            }
-            for item in result.aggregated
-        ],
-        "ranking": [
-            {
-                "label": item.label,
-                "evaluation_type": item.evaluation_type,
-                "layout_spec": item.layout_spec,
-                "ranking_score": item.ranking_score,
-                "mean_metrics": item.mean_metrics,
-            }
-            for item in result.ranking
-        ],
-        "combined_ranking": [
-            {
-                "label": item.label,
-                "evaluation_type": item.evaluation_type,
-                "layout_spec": item.layout_spec,
-                "ranking_score": item.ranking_score,
-                "mean_metrics": item.mean_metrics,
-            }
-            for item in (result.combined_ranking or result.ranking)
-        ],
-    }
 
 
 def best_layout_run(result: LayoutEvaluationResult, primary_metric: str) -> LayoutEvaluationRun:
@@ -418,3 +338,16 @@ def _deduplicate_candidates(candidates: tuple[LayoutCandidate, ...]) -> tuple[La
         seen.add(candidate.label)
         result.append(candidate)
     return tuple(result)
+
+
+def _validate_optional_seed_stream(
+    values: tuple[int, ...] | None,
+    fallback: tuple[int, ...],
+    name: str,
+) -> None:
+    if values is not None and len(values) != len(fallback):
+        raise ValueError(f"{name} muss dieselbe Laenge wie seeds besitzen.")
+
+
+def _seed_at(values: tuple[int, ...] | None, index: int, fallback: int) -> int:
+    return int(values[index] if values is not None else fallback)

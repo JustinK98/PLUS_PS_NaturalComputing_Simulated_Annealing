@@ -1,0 +1,13 @@
+Slide 1: Technical correction
+
+The experiment does not evaluate a changed activation layout by retraining it from scratch at every step.
+
+Instead, Online-Delta-SA compares two layouts under controlled conditions:
+
+- same network weights
+- same mini-batch
+- only one hidden-neuron activation function changed
+- reduction: only set_neuron as AF change 
+- no candidate training before the acceptance decision
+
+This makes the measured loss difference an immediate effect of the activation-function change, not an effect of additional training.

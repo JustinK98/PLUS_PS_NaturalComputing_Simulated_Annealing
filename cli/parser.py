@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 
+from annealing_schedules import SUPPORTED_COOLING_SCHEDULES
 from configs import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_BENCHMARK,
+    DEFAULT_GUI_PROFILE,
     DEFAULT_LAYOUT,
     DEFAULT_LEARNING_RATE,
     DEFAULT_NEIGHBOR_PREVIEW,
@@ -15,6 +17,7 @@ from configs import (
     LAYOUT_SYNTAX_EXAMPLES,
     SUPPORTED_BENCHMARKS,
 )
+from services.gui_profile_service import SUPPORTED_GUI_PROFILES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,9 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     gui_parser.add_argument(
         "--profile",
         dest="gui_profile",
-        choices=("demo", "tuned_20260530"),
-        default="demo",
-        help="GUI-Parameterprofil: schnelle Demo oder fixierte Evaluation.",
+        choices=SUPPORTED_GUI_PROFILES,
+        default=DEFAULT_GUI_PROFILE,
+        help="GUI-Parameterprofil fuer die fokussierte Demonstration.",
     )
 
     run_parser = subparsers.add_parser("run", help="Fuehre einen einzelnen CLI-Trainingslauf aus.")
@@ -60,9 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     experiment_suite_parser.add_argument(
         "--exp",
-        choices=("online-delta", "random-baseline", "all-baseline", "swap-ablation"),
+        choices=("online-delta", "random-baseline", "swap-ablation"),
         default="online-delta",
-        help="Suite-Typ: online-delta, random-baseline, all-baseline oder swap-ablation.",
+        help="Suite-Typ: online-delta, random-baseline oder swap-ablation.",
     )
     experiment_suite_parser.add_argument(
         "--benchmark",
@@ -80,7 +83,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--runs",
         type=int,
         default=None,
-        help="Anzahl unabhaengiger Runs. Default kommt aus configs/experiment_suites.json.",
+        help="Legacy-Alias fuer N Layouts x 1 Replicate. Nicht mit --layouts/--replicates kombinieren.",
+    )
+    experiment_suite_parser.add_argument(
+        "--layouts",
+        type=int,
+        default=None,
+        help="Anzahl unabhaengiger Random-Startlayouts. Default: 10.",
+    )
+    experiment_suite_parser.add_argument(
+        "--replicates",
+        type=int,
+        default=None,
+        help="Such-/Trainingswiederholungen pro Startlayout. Default: 3.",
     )
     experiment_suite_parser.add_argument(
         "--epochs",
@@ -101,10 +116,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optionales Override fuer die Online-Delta-SA-Starttemperatur.",
     )
     experiment_suite_parser.add_argument(
+        "--cooling-schedule",
+        choices=SUPPORTED_COOLING_SCHEDULES,
+        default=None,
+        help="Optionales Override fuer die Cooling-Strategie.",
+    )
+    experiment_suite_parser.add_argument(
         "--cooling-parameter",
         type=float,
         default=None,
-        help="Optionales Override fuer den geometrischen Cooling-Faktor.",
+        help="Optionales Override fuer den Parameter der Cooling-Strategie.",
     )
     experiment_suite_parser.add_argument(
         "--iterations-per-temperature",
@@ -143,6 +164,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional getrennte Batch-Groesse waehrend Online-Delta-SA.",
     )
     experiment_suite_parser.add_argument(
+        "--target-online-epochs",
+        type=float,
+        default=None,
+        help="Dokumentiertes Mindestbudget tatsaechlicher Online-Trainings-Epochen.",
+    )
+    experiment_suite_parser.add_argument(
         "--evaluation-profile",
         default=None,
         help=(
@@ -172,7 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     experiment_tune_parser.add_argument(
         "--profile",
-        choices=("overnight",),
+        choices=("overnight", "mayer-corrected", "methodical", "methodical-confirmation-30"),
         default="overnight",
         help="Tuning-Profil aus configs/hyperparameter_tuning.json.",
     )
@@ -186,9 +213,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--phase",
         choices=(
             "full",
+            "online-full",
             "training-screen",
             "training-refine",
             "delta-probe",
+            "online-budget-probe",
             "sa-screen",
             "sa-refine",
             "confirm",
@@ -222,7 +251,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Exportiere in der Confirmation zusaetzlich regenerierbare PNG-Frames akzeptierter Online-Delta-Schritte.",
     )
-
+    experiment_tune_parser.add_argument(
+        "--import-training-from",
+        default=None,
+        help="Importiere die unveraenderte SGD-Trainingsauswahl aus einem frueheren Tuninglauf.",
+    )
     online_delta_report_parser = experiment_subparsers.add_parser(
         "report-online-delta",
         help="Aggregiere Online-Delta-SA-Historien aus vorhandenen Suite-Ergebnissen.",

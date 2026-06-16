@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
-
 import numpy as np
 
 from annealing import AnnealingConfig
@@ -62,9 +61,7 @@ class OnlineAnnealingTrainingServiceTests(unittest.TestCase):
             np.testing.assert_allclose(before, after)
 
     def test_validation_only_start_evaluation_does_not_compute_test_metrics(self) -> None:
-        session = create_online_session(
-            replace(self._request(seed=5), include_test_metrics=False)
-        )
+        session = create_online_session(self._request(seed=5))
 
         snapshot = evaluate_online_start(session, "en")
 
@@ -99,6 +96,18 @@ class OnlineAnnealingTrainingServiceTests(unittest.TestCase):
             )
         )
 
+    def test_set_neuron_candidate_always_differs_from_current_layout(self) -> None:
+        session = create_online_session(self._request(seed=19, temperature=1_000_000.0, max_steps=20))
+        evaluate_online_start(session, "en")
+
+        for _ in range(20):
+            snapshot = online_step_once(session, "en")
+            assert snapshot.last_step is not None
+            self.assertNotEqual(
+                snapshot.last_step.previous_layout,
+                snapshot.last_step.candidate_layout,
+            )
+
     def test_rejected_candidate_restores_previous_layout(self) -> None:
         rejected_snapshot = None
         rejected_session = None
@@ -108,11 +117,30 @@ class OnlineAnnealingTrainingServiceTests(unittest.TestCase):
             )
             evaluate_online_start(session, "en")
             previous_layout = session.model.layout.to_compact_spec()
+            before_weights = [weight.copy() for weight in session.model.weights]
+            before_cursor = (
+                session.batch_cursor.epoch_index,
+                session.batch_cursor.batch_index,
+                session.batch_cursor.batch_start,
+                session.batch_cursor.trained_examples,
+            )
             snapshot = online_step_once(session, "en")
             if snapshot.last_step is not None and not snapshot.last_step.accepted:
                 rejected_snapshot = snapshot
                 rejected_session = session
                 self.assertEqual(session.model.layout.to_compact_spec(), previous_layout)
+                self.assertEqual(
+                    (
+                        session.batch_cursor.epoch_index,
+                        session.batch_cursor.batch_index,
+                        session.batch_cursor.batch_start,
+                        session.batch_cursor.trained_examples,
+                    ),
+                    before_cursor,
+                )
+                self.assertEqual(snapshot.trained_batch_updates, 0)
+                for before, after in zip(before_weights, session.model.weights, strict=True):
+                    np.testing.assert_allclose(before, after)
                 break
         self.assertIsNotNone(rejected_snapshot)
         self.assertIsNotNone(rejected_session)
@@ -131,9 +159,36 @@ class OnlineAnnealingTrainingServiceTests(unittest.TestCase):
 
         self.assertGreaterEqual(session.batch_cursor.epoch_index, first_epoch)
         self.assertGreater(len(snapshot.history), 0)
+        self.assertEqual(snapshot.trained_batch_updates, snapshot.accepted_steps)
+        self.assertGreater(snapshot.effective_online_epochs, 0.0)
         self.assertIsNotNone(snapshot.best_evaluation)
         assert snapshot.best_evaluation is not None
         self.assertTrue(np.isfinite(snapshot.best_evaluation.val_loss))
+
+    def test_budget_probe_can_stop_after_target_online_epochs(self) -> None:
+        request = replace(
+            self._request(seed=11, temperature=1_000_000_000_000.0, max_steps=10),
+            target_online_epochs=0.025,
+            stop_at_target_online_epochs=True,
+        )
+
+        snapshot = online_step_once(create_online_session(request), "en")
+
+        self.assertEqual(snapshot.trained_batch_updates, 1)
+        self.assertIn("target_online_epochs_reached", snapshot.stop_reasons)
+
+    def test_main_sa_does_not_stop_merely_because_training_target_is_reached(self) -> None:
+        request = replace(
+            self._request(seed=11, temperature=1_000_000_000_000.0, max_steps=2),
+            target_online_epochs=0.025,
+            stop_at_target_online_epochs=False,
+        )
+        session = create_online_session(request)
+        online_step_once(session, "en")
+        snapshot = online_step_once(session, "en")
+
+        self.assertEqual(len(snapshot.history), 2)
+        self.assertNotIn("target_online_epochs_reached", snapshot.stop_reasons)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,32 @@
+Slide 3: Online-Delta step
+
+Current state:
+- weights W
+- activation layout L
+- mini-batch B from the training data
+
+Binary Cross Entropy Loss (BCE):
+It measures how far the predicted class probability is from the true binary label.
+Lower BCE means the network assigns higher probability to the correct class.
+
+Step:
+1. Measure current loss:
+   loss_before = BCE(W, L, B)
+
+2. Change one hidden neuron's activation function:
+   L -> L'
+
+3. Measure candidate loss without training:
+   loss_after = BCE(W, L', B)
+
+4. Compute Online-Delta:
+   delta = loss_after - loss_before
+
+5. SA acceptance:
+   - if delta <= 0: accept
+   - if delta > 0: accept with probability exp(-delta / temperature)
+
+6. Only if accepted:
+   keep L' and train the network on one mini-batch.
+
+

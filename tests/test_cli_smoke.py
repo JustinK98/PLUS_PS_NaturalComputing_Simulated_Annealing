@@ -49,7 +49,9 @@ class CliSmokeTests(unittest.TestCase):
                     "two_moons",
                     "--epochs",
                     "1",
-                    "--runs",
+                    "--layouts",
+                    "1",
+                    "--replicates",
                     "1",
                     "--max-steps",
                     "2",
@@ -76,6 +78,14 @@ class CliSmokeTests(unittest.TestCase):
             self.assertNotIn("test_accuracy", summary_text)
             self.assertNotIn("test_loss", run_text)
             self.assertNotIn("test_accuracy", run_text)
+            self.assertTrue((learning_rate_dir / "seed_manifest.csv").exists())
+            self.assertIn('"layout_index": 0', run_text)
+            self.assertIn('"replicate_index": 0', run_text)
+            self.assertTrue((suite_dir / "aggregate" / "paired_runs.csv").exists())
+            self.assertTrue((suite_dir / "aggregate" / "benchmark_summary.csv").exists())
+            self.assertFalse(
+                (suite_dir / "aggregate" / "paired_random_vs_sa_end.png").exists()
+            )
             report = subprocess.run(
                 [
                     sys.executable,
@@ -91,7 +101,8 @@ class CliSmokeTests(unittest.TestCase):
                 check=True,
             )
             self.assertIn("runs:       1", report.stdout)
-            self.assertIn("online_delta_progress_mean.png", report.stdout)
+            self.assertIn("online_delta_fitness_mean.png", report.stdout)
+            self.assertIn("online_delta_validation_progress_mean.png", report.stdout)
 
     def test_experiment_suite_online_delta_visual_artifacts_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -61,7 +61,8 @@ class AnnealingHistoryPanel(QtWidgets.QWidget):
                     f"step={step.step_index} epoch={step.epoch_index} batch={step.batch_index} "
                     f"accepted={step.accepted} delta={step.delta:+.4f} "
                     f"before={step.batch_loss_before:.4f} after={step.candidate_loss_after:.4f} "
-                    f"trained={step.trained_after_accept}"
+                    f"trained={step.trained_after_accept} updates={step.trained_batch_updates_after_step} "
+                    f"online_epochs={step.effective_online_epochs_after_step:.3f}"
                 )
             )
         self.text.setPlainText(

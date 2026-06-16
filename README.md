@@ -1,8 +1,7 @@
 # Activation Playground
 
 Activation Playground evaluates activation-function layouts in small neural
-networks. The official experiment path follows a deliberately simple
-Online-Delta Simulated Annealing design:
+networks. The official experiment path follows a simple Online-Delta Simulated Annealing design:
 
 - random mixed start layouts
 - all six Basics activations: `relu`, `gelu`, `sigmoid`, `tanh`, `swish`, `identity`
@@ -39,16 +38,18 @@ python main.py
 ```bash
 python main.py gui
 python main.py gui --benchmark concentric_circles
-python main.py gui --benchmark concentric_circles --profile tuned_20260530
+python main.py gui --benchmark concentric_circles --profile demo
 ```
 
-The German-language GUI visualizes one Online-Delta workflow with an in-memory
-network timeline. Accepted candidate changes are outlined in green and rejected
-changes in red. Use `demo` for a quick explanation and `tuned_20260530` to load
-the fixed benchmark-specific evaluation parameters. Reproducible multi-run
-evaluation belongs to the CLI. The GUI always uses the fixed Basics topology of
-the selected benchmark; free topology overrides remain available only in the
-manual `run` command.
+The GUI visualizes one Online-Delta workflow with an in-memory decision
+timeline. A normal GUI start loads `methodical_selected_20260613`, the
+benchmark-specific configuration selected by the completed methodical tuning
+run. Use `demo` for a faster explanation. The selected profile is useful for
+reproducing the tuned setup, but its locked confirmation did not establish a
+robust general Online-Delta-SA advantage. Reproducible multi-run evaluation
+belongs to the CLI. The GUI always uses the fixed Basics topology of the
+selected benchmark; free topology overrides remain available only in the manual
+`run` command.
 
 ## CLI
 
@@ -124,5 +125,4 @@ The vendored CSV files live under `data/benchmarks/basics_group/`.
 - [Terminal Experiments](docs/EXPERIMENTS.md)
 - [Fixed Results](docs/RESULTS_REPORT.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Cleanup Plan](docs/CLEANUP_PLAN.md)
 - [Documentation Archive](docs/archive/README.md)

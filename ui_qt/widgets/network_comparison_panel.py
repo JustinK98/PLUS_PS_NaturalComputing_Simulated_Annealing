@@ -31,7 +31,7 @@ class NetworkComparisonPanel(QtWidgets.QWidget):
         self.reference_title = QtWidgets.QLabel("Vergleichslayout")
         self.reference_title.setProperty("role", "sectionTitle")
         self.reference_combo = QtWidgets.QComboBox()
-        self.reference_combo.addItem("Bestes Layout", "best")
+        self.reference_combo.addItem("Diagnostisches Bestlayout", "best")
         self.reference_combo.addItem("Aktuelles Layout", "current")
         self.reference_combo.addItem("Letzter Kandidat", "candidate")
         self.reference_combo.currentIndexChanged.connect(self._refresh_reference)
@@ -149,6 +149,6 @@ class NetworkComparisonPanel(QtWidgets.QWidget):
         return (
             f"Layout: {evaluation.layout.to_compact_spec()}\n"
             f"Batch-Loss: {evaluation.objective_value:.6f} | "
-            f"Validation-Loss: {evaluation.val_loss:.6f} | "
+            f"Validation-Loss (Diagnose): {evaluation.val_loss:.6f} | "
             f"Validation-Accuracy: {evaluation.val_accuracy:.4f}"
         )

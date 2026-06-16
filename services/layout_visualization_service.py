@@ -79,7 +79,7 @@ def write_online_delta_layout_artifacts(
         (
             ("Startlayout", snapshot.start_evaluation.layout, snapshot.start_evaluation.val_loss),
             (
-                "Best layout",
+                "Diagnostic best layout",
                 (
                     snapshot.best_evaluation.layout
                     if snapshot.best_evaluation is not None

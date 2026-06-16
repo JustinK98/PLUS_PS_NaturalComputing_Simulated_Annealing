@@ -1,405 +1,157 @@
-# Ergebnisbericht: Online-Delta-SA auf den Basics-Benchmarks
+# Ergebnisbericht: Mayer-korrigiertes Online-Delta-SA
 
-## 1. Status und Datenbasis
+## Status
 
-Dieser Bericht dokumentiert das fixierte Evaluationsprofil `tuned_20260530`.
-Die zugrunde liegenden Artefakte liegen unter:
+Aktives Evaluationsprofil: `mayer_corrected_20260604`
 
-```text
-outputs/hyperparameter_tuning/20260530_143043_overnight
-```
-
-Die Hyperparameter wurden ausschließlich anhand von Validation-Metriken
-ausgewählt. Testmetriken wurden erst in der finalen Confirmation-Phase
-berechnet. Die maschinenlesbaren Parameter sind versioniert in:
+Quellartefakt:
 
 ```text
-configs/evaluation_profiles.json
+outputs/hyperparameter_tuning/20260602_122626_mayer-corrected
 ```
 
-Jeder Benchmark wurde in der Confirmation-Phase mit `30` Runs ausgewertet.
-Jeder Online-Delta-Run beginnt mit einem zufälligen gemischten Layout und nutzt
-ausschließlich die Nachbarschaftsoperation `set_neuron`.
-
-## 2. Was genau wird verglichen?
-
-Online-Delta-SA hat zwei verschiedene Bewertungsebenen. Diese dürfen nicht
-verwechselt werden.
-
-### 2.1 Suchverlauf mit geerbten Gewichten
-
-Während der SA-Suche werden Layoutänderungen online geprüft:
-
-1. Ein Hidden-Neuron wird gleichverteilt ausgewählt.
-2. Seine Aktivierungsfunktion wird durch eine andere Basics-AF ersetzt.
-3. Aktuelles Layout und Kandidat werden mit denselben Gewichten und demselben
-   Mini-Batch bewertet.
-4. Aus der Batch-Loss-Differenz entsteht das Online-Delta:
-
-```text
-Online-Delta = Kandidaten-Batch-Loss - aktueller Batch-Loss
-```
-
-Ein negatives Delta ist eine lokale Verbesserung. Ein positives Delta kann
-abhängig von der Temperatur trotzdem akzeptiert werden. Nach akzeptierten
-Schritten wird das Modell auf dem Mini-Batch weitertrainiert.
-
-Die Progress-Plots zeigen den Validation-Loss des dabei geerbten, laufend
-aktualisierten Modells. Sie beantworten:
-
-> Lernt und bewegt sich der Online-Delta-Prozess numerisch sinnvoll?
-
-### 2.2 Fairer Layoutvergleich nach vollständigem Retraining
-
-Für die fachliche Aussage über Aktivierungs-Layouts werden die Layouts nach der
-Suche mit frisch initialisierten Gewichten vollständig neu trainiert:
-
-- `same_random_start_retrained`: dasselbe zufällige Startlayout ohne SA-Vorteil
-- `best_layout_from_sa_retrained`: bestes während SA beobachtetes Layout
-- `end_layout_from_sa_retrained`: Layout am Ende der SA-Suche
-- `all_relu`, `all_gelu`, `all_sigmoid`, `all_tanh`, `all_swish`,
-  `all_identity`: homogene Referenzlayouts
-
-Die zentrale Kennzahl ist:
-
-```text
-paired improvement =
-  Val-Loss(same_random_start_retrained)
-  - Val-Loss(best_layout_from_sa_retrained)
-```
-
-Positive Werte bedeuten: SA hat für denselben Run ein besser trainierbares
-Layout als das zufällige Startlayout gefunden.
-
-## 3. Metriken lesen
-
-| Metrik | Bedeutung | Ziel |
-| --- | --- | --- |
-| `Validation-Loss` | Binary Cross Entropy auf dem Validation-Split | niedriger ist besser |
-| `Validation-Accuracy` | Anteil korrekter Validation-Vorhersagen | höher ist besser |
-| `Test-Loss` | Binary Cross Entropy auf dem unangetasteten Test-Split | nur final berichten |
-| `Test-Accuracy` | Anteil korrekter Test-Vorhersagen | nur final berichten |
-| `Acceptance Rate` | Anteil akzeptierter SA-Kandidaten | weder nahe `0` noch nahe `1` |
-| `Paired Improvement` | Verbesserung des retrainierten SA-Bestlayouts gegenüber demselben Random-Start | positiv ist besser |
-| `Win Rate` | Anteil der Runs mit positivem Paired Improvement | deutlich über `0.5` wäre überzeugend |
-| `Layout-Hamming-Distanz` | Anteil unterschiedlicher AF-Positionen zwischen gefundenen Bestlayouts | niedrig bedeutet ähnliche Layouts |
-
-`Validation-Loss` ist die primäre Auswahlmetrik. Testmetriken dürfen nicht zur
-Layoutsuche oder Hyperparameterwahl verwendet werden.
-
-## 4. Fixierte Hyperparameter
-
-### 4.1 Normales Retraining
-
-| Benchmark | Topologie | Lernrate | Epochen | Batch-Groesse | Xavier-Skalierung |
-| --- | --- | ---: | ---: | ---: | ---: |
-| `two_moons` | `2-8-1` | `0.2` | `400` | `64` | `2.0` |
-| `concentric_circles` | `2-8-8-1` | `0.02` | `400` | `16` | `0.5` |
-| `crossing_spirals` | `6-16-16-1` | `0.1` | `1500` | `8` | `0.75` |
-
-### 4.2 Online-Delta-SA
-
-| Benchmark | Starttemperatur | Cooling | Iterationen / Temperatur | Schritte | Online-LR | Online-Batch |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `two_moons` | `0.0242435` | `0.9` | `10` | `480` | `0.4` | `16` |
-| `concentric_circles` | `0.0005410` | `0.9` | `10` | `480` | `0.04` | `128` |
-| `crossing_spirals` | `0.0024640` | `0.98` | `10` | `480` | `0.025` | `16` |
-
-Die deutlich unterschiedlichen Temperaturen sind gewollt. Eine Delta-Probe hat
-vor der SA-Suche die Loss-Delta-Skala jedes Benchmarks vermessen.
-
-## 5. Vergleich aller Benchmarks
-
-### 5.1 Retrainierte Layouts
-
-| Benchmark | SA-Bestlayout Val-Loss | Random-Baseline Val-Loss | Paired Improvement | Win Rate | Beste homogene Baseline |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `two_moons` | `0.08893 +/- 0.02745` | `0.09072 +/- 0.02417` | `+0.00178` | `16 / 30 = 53.3 %` | `all_gelu`: `0.08391 +/- 0.02204` |
-| `concentric_circles` | `0.02953 +/- 0.01551` | `0.02961 +/- 0.01759` | `+0.00008` | `16 / 30 = 53.3 %` | `all_swish`: `0.02663 +/- 0.01550` |
-| `crossing_spirals` | `0.70738 +/- 0.20264` | `0.66226 +/- 0.12926` | `-0.04512` | `13 / 30 = 43.3 %` | `all_relu`: `0.63821 +/- 0.18993` |
-
-### 5.2 Finale Testmetriken des retrainierten SA-Bestlayouts
-
-| Benchmark | Test-Loss | Test-Accuracy |
-| --- | ---: | ---: |
-| `two_moons` | `0.03823 +/- 0.00863` | `0.98983 +/- 0.00398` |
-| `concentric_circles` | `0.02724 +/- 0.00743` | `0.98667 +/- 0.00298` |
-| `crossing_spirals` | `0.63166 +/- 0.11797` | `0.76117 +/- 0.04139` |
-
-### 5.3 SA-Gesundheit
-
-| Benchmark | Mittlere Acceptance Rate | Mittlerer SA-Start-Val-Loss | Mittlerer bester beobachteter Val-Loss | Mittlerer End-Val-Loss |
-| --- | ---: | ---: | ---: | ---: |
-| `two_moons` | `0.5056 +/- 0.0441` | `1.2108` | `0.2320` | `0.2640` |
-| `concentric_circles` | `0.3065 +/- 0.0493` | `0.6955` | `0.6717` | `0.6735` |
-| `crossing_spirals` | `0.6793 +/- 0.0311` | `0.6994` | `0.6830` | `0.6924` |
-
-## 6. Benchmark: `two_moons`
-
-### 6.1 Ergebnis
-
-`two_moons` zeigt ein schwach positives Online-Delta-Ergebnis:
-
-- Der laufende SA-Prozess verbessert den mittleren Validation-Loss deutlich von
-  `1.2108` auf einen besten beobachteten Wert von `0.2320`.
-- Nach fairem Retraining verbessert das SA-Bestlayout die gepaarte
-  Random-Baseline im Mittel nur um `0.00178`.
-- SA gewinnt `16` von `30` Vergleichen.
-- Die homogene Referenz `all_gelu` bleibt mit `0.08391` besser als das
-  retrainierte SA-Bestlayout mit `0.08893`.
-
-Die richtige Aussage ist:
-
-> Online-Delta-SA funktioniert auf `two_moons` als Layout-Suche, erzeugt aber
-> nur einen kleinen Vorteil gegenüber zufälligen Startlayouts und keinen
-> nachgewiesenen Vorteil gegenüber der besten homogenen Referenz.
-
-### 6.2 Progress-Kurve
-
-![two_moons: mittlerer Online-Delta-Progress](results/tuned_20260530/two_moons/online_delta_progress_mean.png)
-
-Die Kurve zeigt Mittelwert und Streuband des laufenden Validation-Loss über alle
-`30` Runs. Der größte Fortschritt entsteht früh. Danach verbessert sich der
-Prozess langsamer weiter. Das belegt eine funktionierende Online-Optimierung,
-nicht automatisch einen starken Layoutvorteil nach Retraining.
-
-### 6.3 Acceptance Rate
-
-![two_moons: Acceptance Rate](results/tuned_20260530/two_moons/online_delta_acceptance_rate.png)
-
-Die mittlere Acceptance Rate beträgt `0.5056`. SA akzeptiert also ungefähr die
-Hälfte der Vorschläge. Der Prozess ist weder eingefroren noch ein vollständig
-ungefilterter Random Walk.
-
-### 6.4 Delta-Verteilung und Temperatur
-
-![two_moons: Delta-Verteilung](results/tuned_20260530/two_moons/online_delta_delta_distribution.png)
-
-![two_moons: Temperaturverlauf](results/tuned_20260530/two_moons/online_delta_temperature.png)
-
-Die Delta-Verteilung zeigt die lokalen Batch-Loss-Unterschiede der
-`set_neuron`-Kandidaten. Die Temperatur fällt geometrisch ab. Dadurch können
-früh noch schlechtere Kandidaten akzeptiert werden, während die Suche später
-selektiver wird.
-
-### 6.5 Aktivierungsfunktionen in Bestlayouts
-
-![two_moons: AF-Haeufigkeiten](results/tuned_20260530/two_moons/activation_counts_best.png)
-
-| AF | Anteil in den SA-Bestlayouts |
-| --- | ---: |
-| `gelu` | `24.2 %` |
-| `tanh` | `19.6 %` |
-| `identity` | `18.8 %` |
-| `relu` | `17.1 %` |
-| `swish` | `11.7 %` |
-| `sigmoid` | `8.8 %` |
-
-Es gibt keine einzelne dominante AF. Die mittlere normalisierte
-Hamming-Distanz zwischen den Bestlayouts beträgt `0.8267`. Die gefundenen
-Layouts unterscheiden sich also stark. SA konvergiert nicht auf ein klar
-erkennbares gemeinsames Muster.
-
-## 7. Benchmark: `concentric_circles`
-
-### 7.1 Ergebnis
-
-`concentric_circles` ist unter normalem Training bereits nahezu gesättigt:
-
-- Random-Baseline: `0.02961`
-- Retrainiertes SA-Bestlayout: `0.02953`
-- Paired Improvement: `+0.00008`
-- Win Rate: `16 / 30`
-- Beste homogene Referenz `all_swish`: `0.02663`
-
-Die richtige Aussage ist:
-
-> Online-Delta-SA ist numerisch stabil, aber auf `concentric_circles`
-> praktisch neutral. Der Benchmark bietet unter den fixierten Bedingungen nur
-> wenig Raum für eine relevante Verbesserung.
-
-### 7.2 Progress-Kurve
-
-![concentric_circles: mittlerer Online-Delta-Progress](results/tuned_20260530/concentric_circles/online_delta_progress_mean.png)
-
-Der laufende Validation-Loss sinkt nur leicht von `0.6955` auf einen besten
-beobachteten Wert von `0.6717`. Die Online-Suche bewegt sich, aber der spätere
-Retraining-Vergleich zeigt praktisch keinen Layoutvorteil.
-
-### 7.3 Acceptance Rate
-
-![concentric_circles: Acceptance Rate](results/tuned_20260530/concentric_circles/online_delta_acceptance_rate.png)
-
-Die mittlere Acceptance Rate beträgt `0.3065`. Die Auswahl ist restriktiver als
-bei `two_moons`, bleibt aber in einem plausiblen Bereich.
-
-### 7.4 Delta-Verteilung und Temperatur
-
-![concentric_circles: Delta-Verteilung](results/tuned_20260530/concentric_circles/online_delta_delta_distribution.png)
-
-![concentric_circles: Temperaturverlauf](results/tuned_20260530/concentric_circles/online_delta_temperature.png)
-
-Die Delta-Skala ist deutlich kleiner als bei `two_moons`. Deshalb wurde eine
-wesentlich niedrigere Starttemperatur (`0.0005410`) gewählt.
-
-### 7.5 Aktivierungsfunktionen in Bestlayouts
-
-![concentric_circles: AF-Haeufigkeiten](results/tuned_20260530/concentric_circles/activation_counts_best.png)
-
-| AF | Anteil in den SA-Bestlayouts |
-| --- | ---: |
-| `relu` | `40.8 %` |
-| `identity` | `32.1 %` |
-| `tanh` | `10.0 %` |
-| `sigmoid` | `8.8 %` |
-| `swish` | `5.0 %` |
-| `gelu` | `3.3 %` |
-
-`relu` und `identity` dominieren die gefundenen Bestlayouts. Trotzdem beträgt
-die mittlere normalisierte Hamming-Distanz `0.7125`. Es gibt also eine Tendenz
-in der AF-Zusammensetzung, aber weiterhin kein einzelnes stabiles Ziel-Layout.
-
-## 8. Benchmark: `crossing_spirals`
-
-### 8.1 Ergebnis
-
-`crossing_spirals` ist der schwierige Diagnose-Benchmark:
-
-- Random-Baseline: `0.66226`
-- Retrainiertes SA-Bestlayout: `0.70738`
-- Paired Improvement: `-0.04512`
-- Win Rate: `13 / 30`
-- Beste homogene Referenz `all_relu`: `0.63821`
-
-Die richtige Aussage ist:
-
-> Unter der fixierten Basics-Topologie und einfachem SGD verschlechtert
-> Online-Delta-SA die gepaarte Random-Baseline im Mittel. Für
-> `crossing_spirals` liegt kein positives SA-Ergebnis vor.
-
-### 8.2 Progress-Kurve
-
-![crossing_spirals: mittlerer Online-Delta-Progress](results/tuned_20260530/crossing_spirals/online_delta_progress_mean.png)
-
-Der laufende Validation-Loss verbessert sich nur leicht von `0.6994` auf einen
-besten beobachteten Wert von `0.6830`. Das ist deutlich schwächer als bei
-`two_moons`. Das spätere Retraining zeigt zusätzlich eine negative mittlere
-Layoutwirkung.
-
-### 8.3 Acceptance Rate
-
-![crossing_spirals: Acceptance Rate](results/tuned_20260530/crossing_spirals/online_delta_acceptance_rate.png)
-
-Die mittlere Acceptance Rate beträgt `0.6793`. Die Suche akzeptiert deutlich
-mehr Kandidaten als auf den anderen Benchmarks. Zusammen mit der schwachen
-Progress-Kurve spricht das für eine weniger selektive Suche.
-
-### 8.4 Delta-Verteilung und Temperatur
-
-![crossing_spirals: Delta-Verteilung](results/tuned_20260530/crossing_spirals/online_delta_delta_distribution.png)
-
-![crossing_spirals: Temperaturverlauf](results/tuned_20260530/crossing_spirals/online_delta_temperature.png)
-
-Das langsamere Cooling (`0.98`) hält die Suche länger explorativ. Unter den
-getesteten Bedingungen führt diese Exploration jedoch nicht zu besser
-retrainierbaren Layouts.
-
-### 8.5 Aktivierungsfunktionen in Bestlayouts
-
-![crossing_spirals: AF-Haeufigkeiten](results/tuned_20260530/crossing_spirals/activation_counts_best.png)
-
-| AF | Anteil in den SA-Bestlayouts |
-| --- | ---: |
-| `relu` | `17.5 %` |
-| `identity` | `17.5 %` |
-| `gelu` | `16.7 %` |
-| `sigmoid` | `16.3 %` |
-| `swish` | `16.3 %` |
-| `tanh` | `15.8 %` |
-
-Die Verteilung ist nahezu gleichverteilt. Die mittlere normalisierte
-Hamming-Distanz beträgt `0.8367`. Online-Delta findet weder eine dominante AF
-noch ein stabiles Layoutmuster.
-
-## 9. Gesamtinterpretation
-
-Die Ergebnisse stützen keine allgemeine Behauptung, dass Online-Delta-SA bessere
-Aktivierungs-Layouts als einfache Baselines findet.
-
-| Benchmark | Befund |
-| --- | --- |
-| `two_moons` | kleines positives Signal gegenüber Random-Starts, aber schwächer als `all_gelu` |
-| `concentric_circles` | praktisch neutral; Benchmark bereits fast gesättigt |
-| `crossing_spirals` | negatives SA-Ergebnis; Random- und `all_relu`-Baseline stärker |
-
-Die technisch belastbare Aussage lautet:
-
-> Der implementierte Online-Delta-SA-Prozess ist reproduzierbar, numerisch
-> beobachtbar und als Suchmechanismus funktionsfähig. Unter den untersuchten
-> Basics-Bedingungen erzeugt er jedoch keinen konsistenten Vorteil gegenüber
-> einfachen Random- oder homogenen Baselines.
-
-Das ist ein fachlich verwertbares Ergebnis. Ein negativer oder neutraler Befund
-ist besser als eine überzogene positive Aussage.
-
-## 10. Seed-Einschraenkung
-
-Die Confirmation-Runs verwenden `30` Run-Indizes (`0` bis `29`). Innerhalb
-eines Runs wird derselbe Zahlenwert aktuell mehrfach verwendet:
-
-```text
-layout_seed = training_seed = split_seed = weight_seed = batch_seed = sa_seed
-```
-
-Der gepaarte Vergleich zwischen Random-Startlayout und SA-Bestlayout bleibt
-dadurch grundsätzlich fair: Beide werden innerhalb eines Runs unter denselben
-Trainingsbedingungen retrainiert.
-
-Die Kopplung erschwert aber die saubere Trennung der Zufallseinflüsse. Vor einer
-endgültigen Abgabe sollten die Zufallsquellen deterministisch aus einem
-übergeordneten Run-Seed abgeleitet und die Confirmation-Runs erneut ausgeführt
+Der fruehere Lauf `tuned_20260530` bleibt nur als
+`legacy_methodology_v1` archiviert und darf nicht fuer neue Aussagen verwendet
 werden.
 
-## 11. Reproduktion
+Die unten dokumentierten Kennzahlen stammen noch aus dem historischen
+Confirmation-Artefakt vor der Trennung aller Zufallsstroeme. Die fixierten
+Hyperparameter bleiben aktiv; belastbare neue Ergebniswerte muessen mit dem
+neuen Design `10 Layouts x 3 Replikate` erneut bestaetigt werden.
 
-Die fixierten Parameter können mit dem Evaluationsprofil erneut ausgeführt
-werden:
+## Methode
 
-```bash
-python main.py experiment suite \
-  --evaluation-profile tuned_20260530 \
-  --exp online-delta \
-  --benchmark two_moons \
-  --runs 30
-```
+Alle drei Basics-Benchmarks nutzen die fixe offizielle Topologie, Binary Cross
+Entropy, SGD, Xavier/Glorot-Initialisierung und zufaellige gemischte
+Startlayouts. Online-Delta-SA verwendet nur `set_neuron`: pro Kandidat wird
+genau ein Hidden-Neuron gleichverteilt ausgewaehlt und auf eine andere der
+sechs Basics-Aktivierungen gesetzt.
 
-Analog:
-
-```bash
-python main.py experiment suite --evaluation-profile tuned_20260530 --exp online-delta --benchmark concentric_circles --runs 30
-python main.py experiment suite --evaluation-profile tuned_20260530 --exp online-delta --benchmark crossing_spirals --runs 30
-```
-
-Für die Referenzen:
-
-```bash
-python main.py experiment suite --evaluation-profile tuned_20260530 --exp random-baseline --benchmark two_moons --runs 30
-python main.py experiment suite --evaluation-profile tuned_20260530 --exp all-baseline --benchmark two_moons --runs 30
-```
-
-Die beiden Referenzkommandos werden analog für die anderen Benchmarks
-ausgeführt.
-
-## 12. Quelldateien
-
-Die numerischen Detailartefakte bleiben unter:
+Die SA-Entscheidung basiert auf dem Batch-Loss-Delta mit denselben Gewichten
+und demselben Mini-Batch:
 
 ```text
-outputs/hyperparameter_tuning/20260530_143043_overnight/confirmation/
+delta = candidate_batch_loss - current_batch_loss
 ```
 
-Die für GitHub ausgewählten aggregierten Plotkopien liegen unter:
+Bei `delta <= 0` wird akzeptiert. Bei `delta > 0` wird mit
+`exp(-delta / temperature)` akzeptiert. Erst nach Akzeptanz wird das behaltene
+Layout auf diesem Mini-Batch trainiert. Rejections trainieren nicht.
 
-```text
-docs/results/tuned_20260530/
-```
+Die finale Bewertung vergleicht gepaart:
+
+- `same_random_start_retrained`: dasselbe zufaellige Startlayout, neu trainiert
+- `end_layout_from_sa_retrained`: finales SA-Layout, neu trainiert
+- `best_online_delta_value`: bestes geerbtes Online-Delta-Modell nur diagnostisch
+
+Neue Confirmation-Runs verwenden `10` zufaellige Layouts mit jeweils `3`
+unabhaengigen Replikaten. Die Zufallsstroeme fuer Layout, Gewichte,
+Mini-Batches, SA-Proposals und SA-Akzeptanz sind getrennt. Random-Start und
+finales SA-Layout werden mit identischem Split, identischen
+Retraining-Startgewichten und identischer Batch-Reihenfolge verglichen.
+
+Primaer zaehlt Validation-Loss. Testmetriken werden nur final berichtet.
+
+## Hauptergebnisse
+
+| Benchmark | Random Start Val Loss | End SA Layout Val Loss | Gepaarte Verbesserung | Win Rate | End SA Test Acc | Urteil |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `two_moons` | 0.0907 | 0.0885 | +0.0022 | 0.50 | 0.9895 | schwach positiv |
+| `concentric_circles` | 0.0296 | 0.0282 | +0.0014 | 0.47 | 0.9868 | praktisch neutral |
+| `crossing_spirals` | 0.6623 | 0.6890 | -0.0268 | 0.47 | 0.7392 | negativ |
+
+Interpretation:
+
+- `two_moons`: Online-Delta verbessert den gepaarten Random-Start im Mittel
+  leicht. Der Effekt ist klein.
+- `concentric_circles`: Der Benchmark ist nahezu gesaettigt. Online-Delta
+  liefert eine kleine mittlere Loss-Verbesserung, aber keine starke praktische
+  Ueberlegenheit.
+- `crossing_spirals`: Die SGD-Trainingskonfiguration ist lernfaehig, aber
+  Online-Delta verschlechtert das gepaarte Random-Startlayout im Mittel. Fuer
+  diesen Benchmark gibt es mit diesem Setup keine positive SA-Aussage.
+
+## Fixierte Parameter
+
+| Benchmark | Training LR | Epochs | Batch | Weight Scale | SA T0 | Cooling | Iter/T | Max Steps | Online LR | Online Batch |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `two_moons` | 0.2 | 400 | 64 | 2.0 | 0.02424 | 0.9990 | 10 | 12500 | 0.2 | 128 |
+| `concentric_circles` | 0.02 | 400 | 16 | 0.5 | 0.00390 | 0.9975 | 25 | 50000 | 0.04 | 32 |
+| `crossing_spirals` | 0.1 | 1500 | 8 | 0.75 | 0.00246 | 0.9900 | 5 | 2500 | 0.2 | 64 |
+
+## SA-Gesundheit
+
+| Benchmark | Acceptance Rate | Effective Online Epochs | Bewertung |
+| --- | ---: | ---: | --- |
+| `two_moons` | 0.663 | 1657.6 | viele akzeptierte Vorschlaege, lange Online-Trainingsphase |
+| `concentric_circles` | 0.482 | 1108.2 | gesunde Akzeptanz, aber Benchmark bereits sehr leicht |
+| `crossing_spirals` | 0.586 | 134.4 | Akzeptanz gesund, aber Layoutsuche hilft nicht stabil |
+
+Eine gesunde Acceptance Rate allein reicht nicht. Entscheidend ist, ob das
+finale SA-Layout nach sauberem Retraining besser ist als dasselbe
+Random-Startlayout.
+
+## Plots
+
+### two_moons
+
+![two_moons validation progress](../outputs/hyperparameter_tuning/20260602_122626_mayer-corrected/confirmation/two_moons/aggregate/online_delta_validation_progress_mean.png)
+
+![two_moons fitness](../outputs/hyperparameter_tuning/20260602_122626_mayer-corrected/confirmation/two_moons/aggregate/online_delta_fitness_mean.png)
+
+![two_moons activation counts](../outputs/hyperparameter_tuning/20260602_122626_mayer-corrected/confirmation/two_moons/aggregate/activation_counts_end.png)
+
+two_moons zeigt einen sinkenden mittleren Validation-Verlauf und eine kleine
+mittlere Verbesserung des finalen SA-Layouts gegenueber dem gepaarten
+Random-Start. Der Effekt ist sichtbar, aber klein.
+
+### concentric_circles
+
+![concentric_circles validation progress](../outputs/hyperparameter_tuning/20260602_122626_mayer-corrected/confirmation/concentric_circles/aggregate/online_delta_validation_progress_mean.png)
+
+![concentric_circles fitness](../outputs/hyperparameter_tuning/20260602_122626_mayer-corrected/confirmation/concentric_circles/aggregate/online_delta_fitness_mean.png)
+
+![concentric_circles activation counts](../outputs/hyperparameter_tuning/20260602_122626_mayer-corrected/confirmation/concentric_circles/aggregate/activation_counts_end.png)
+
+concentric_circles ist bereits mit normalen Layouts sehr gut loesbar. Daher ist
+die Online-Delta-Verbesserung klein und schwer von Run-Varianz zu trennen.
+
+### crossing_spirals
+
+![crossing_spirals validation progress](../outputs/hyperparameter_tuning/20260602_122626_mayer-corrected/confirmation/crossing_spirals/aggregate/online_delta_validation_progress_mean.png)
+
+![crossing_spirals fitness](../outputs/hyperparameter_tuning/20260602_122626_mayer-corrected/confirmation/crossing_spirals/aggregate/online_delta_fitness_mean.png)
+
+![crossing_spirals activation counts](../outputs/hyperparameter_tuning/20260602_122626_mayer-corrected/confirmation/crossing_spirals/aggregate/activation_counts_end.png)
+
+crossing_spirals bleibt der kritische Benchmark. Die Validation- und
+Retraining-Ergebnisse sprechen dagegen, dass Online-Delta in der aktuellen
+fixen Topologie und mit SGD robust bessere Aktivierungsverteilungen findet.
+
+## Metriken
+
+| Metrik | Bedeutung |
+| --- | --- |
+| `batch_loss_before` | BCE des aktuellen Layouts auf dem aktuellen Mini-Batch |
+| `candidate_loss_after` | BCE des Kandidaten mit denselben Gewichten und demselben Mini-Batch |
+| `delta` | Kandidaten-Loss minus aktueller Loss; entscheidet die SA-Akzeptanz |
+| `post_training_batch_loss` | BCE nach Training eines akzeptierten Kandidaten auf einem Mini-Batch |
+| `trained_mini_batch_updates` | Anzahl akzeptierter Schritte, die ein SGD-Update ausgeloest haben |
+| `effective_online_epochs` | verbrauchte Trainingsbeispiele geteilt durch Trainingsset-Groesse |
+| `val_loss` | BCE auf Validation-Split; primaere Auswahlmetrik |
+| `val_accuracy` | Accuracy auf Validation-Split; sekundaere Diagnose |
+| `test_loss` | BCE auf Test-Split; nur finale Berichtsmetrik |
+| `test_accuracy` | Accuracy auf Test-Split; nur finale Berichtsmetrik |
+| `acceptance_rate` | akzeptierte Vorschlaege geteilt durch alle Vorschlaege |
+
+## Schlussfolgerung
+
+Das Projekt bleibt methodisch auf dem einfachen Online-Delta-SA-Ansatz:
+zufaelliges gemischtes Startlayout, `set_neuron` only, viele Runs, Progress
+Graph und AF-Statistik.
+
+Die Ergebnisse sind wissenschaftlich brauchbar, aber nicht euphorisch:
+Online-Delta zeigt auf zwei einfachen Benchmarks kleine positive Tendenzen und
+auf `crossing_spirals` ein negatives Ergebnis. Der richtige Bericht ist daher:
+Der Ansatz ist implementiert und messbar, aber unter der fixen Basics-Topologie
+und mit SGD nicht durchgehend besser als gepaarte Random-Startlayouts.

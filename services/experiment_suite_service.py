@@ -28,10 +28,8 @@ from configs import (
     DEFAULT_ANNEALING_NEIGHBORHOODS,
     DEFAULT_ANNEALING_START_TEMPERATURE,
     DEFAULT_BATCH_SIZE,
-    DEFAULT_RANDOM_SEED,
     DEFAULT_WEIGHT_SCALE,
     OUTPUT_DIR,
-    SUPPORTED_ACTIVATIONS,
     DatasetConfig,
     TrainingConfig,
     default_epochs,
@@ -39,12 +37,6 @@ from configs import (
 )
 from model import ModularMLP
 from services.evaluation_profile_service import load_evaluation_benchmark_profile
-from services.layout_evaluation_service import (
-    LayoutCandidate,
-    LayoutEvaluationRequest,
-    layout_evaluation_to_dict,
-    run_layout_evaluation,
-)
 from services.layout_visualization_service import write_online_delta_layout_artifacts
 from services.online_annealing_training_service import (
     OnlineAnnealingRequest,
@@ -53,6 +45,12 @@ from services.online_annealing_training_service import (
     online_run_to_completion,
 )
 from services.online_delta_reporting_service import build_online_delta_report
+from services.seed_schedule_service import (
+    RunCoordinate,
+    SeedSchedule,
+    build_run_coordinates,
+    build_seed_schedule,
+)
 from trainer import train_model
 
 
@@ -67,9 +65,12 @@ class ExperimentSuiteRequest:
     benchmark: str
     learning_rate_preset: int
     run_count: int | None = None
+    layout_count: int | None = None
+    replicate_count: int | None = None
     epochs: int | None = None
     max_steps: int | None = None
     start_temperature: float | None = None
+    cooling_schedule: str | None = None
     cooling_parameter: float | None = None
     iterations_per_temperature: int | None = None
     min_temperature: float | None = None
@@ -77,6 +78,7 @@ class ExperimentSuiteRequest:
     weight_scale: float | None = None
     online_learning_rate: float | None = None
     online_batch_size: int | None = None
+    target_online_epochs: float | None = None
     evaluation_profile: str | None = None
     output_root: Path = OUTPUT_DIR / "experiment_suites"
     no_plots: bool = False
@@ -91,15 +93,16 @@ class ExperimentSuiteResult:
     learning_rates: tuple[float, ...]
     run_count: int
     summary_path: Path
+    evaluation_profile_name: str | None = None
 
 
 def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResult:
     """Run one of the official terminal experiment suites."""
 
     suite_config = _load_suite_config()
-    if request.exp not in {"online-delta", "random-baseline", "all-baseline", "swap-ablation"}:
+    if request.exp not in {"online-delta", "random-baseline", "swap-ablation"}:
         raise ValueError(
-            "--exp muss online-delta, random-baseline, all-baseline oder swap-ablation sein."
+            "--exp muss online-delta, random-baseline oder swap-ablation sein."
         )
 
     spec = benchmark_spec(request.benchmark)
@@ -111,6 +114,7 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
     )
     profile_training = evaluation_profile["training"] if evaluation_profile is not None else {}
     profile_online_delta = evaluation_profile["online_delta"] if evaluation_profile is not None else {}
+    evaluation_profile_name = evaluation_profile["name"] if evaluation_profile is not None else None
     include_test_metrics = evaluation_profile is not None
     epochs = (
         request.epochs
@@ -127,7 +131,7 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
         if request.weight_scale is not None
         else float(profile_training.get("weight_scale", DEFAULT_WEIGHT_SCALE))
     )
-    run_indices = _resolve_run_indices(request, suite_config)
+    run_coordinates = _resolve_run_coordinates(request, suite_config)
     learning_rates = (
         [float(profile_training["learning_rate"])]
         if evaluation_profile is not None
@@ -144,11 +148,16 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
         if request.online_batch_size is not None
         else int(profile_online_delta.get("online_batch_size", batch_size))
     )
+    target_online_epochs = (
+        request.target_online_epochs
+        if request.target_online_epochs is not None
+        else profile_online_delta.get("target_online_epochs")
+    )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     profile_suffix = (
-        f"evaluation_profile_{request.evaluation_profile}"
-        if request.evaluation_profile is not None
+        f"evaluation_profile_{evaluation_profile_name}"
+        if evaluation_profile_name is not None
         else f"lr_preset_{request.learning_rate_preset}"
     )
     output_dir = (
@@ -176,7 +185,17 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
             "weight_scale": weight_scale,
             "online_learning_rate": online_learning_rate,
             "online_batch_size": online_batch_size,
-            "runs": list(run_indices),
+            "target_online_epochs": target_online_epochs,
+            "layout_count": len({item.layout_index for item in run_coordinates}),
+            "replicate_count": max(item.replicate_index for item in run_coordinates) + 1,
+            "run_coordinates": [
+                {
+                    "layout_index": item.layout_index,
+                    "replicate_index": item.replicate_index,
+                    "run_id": item.run_id,
+                }
+                for item in run_coordinates
+            ],
             "learning_rate_preset": request.learning_rate_preset,
             "evaluation_profile": evaluation_profile,
             "include_test_metrics": include_test_metrics,
@@ -185,27 +204,25 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
             "annealing": annealing_settings,
         }
         _write_json(lr_dir / "config.json", suite_payload)
+        _write_csv(
+            lr_dir / "seed_manifest.csv",
+            [
+                build_seed_schedule(
+                    request.benchmark,
+                    item.layout_index,
+                    item.replicate_index,
+                ).to_dict()
+                for item in run_coordinates
+            ],
+        )
 
-        if request.exp == "all-baseline":
-            rows, count = _run_all_suite(
-                lr_dir,
-                benchmark=request.benchmark,
-                hidden_sizes=hidden_sizes,
-                run_indices=run_indices,
-                epochs=epochs,
-                learning_rate=learning_rate,
-                batch_size=batch_size,
-                weight_scale=weight_scale,
-                no_plots=request.no_plots,
-                include_test_metrics=include_test_metrics,
-            )
-        elif request.exp == "random-baseline":
+        if request.exp == "random-baseline":
             rows, count = _run_random_baseline_suite(
                 lr_dir,
                 experiment_id=_suite_experiment_id(request.exp, suite_config),
                 benchmark=request.benchmark,
                 hidden_sizes=hidden_sizes,
-                run_indices=run_indices,
+                run_coordinates=run_coordinates,
                 epochs=epochs,
                 learning_rate=learning_rate,
                 batch_size=batch_size,
@@ -219,13 +236,14 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
                 experiment_id=_suite_experiment_id(request.exp, suite_config),
                 benchmark=request.benchmark,
                 hidden_sizes=hidden_sizes,
-                run_indices=run_indices,
+                run_coordinates=run_coordinates,
                 epochs=epochs,
                 learning_rate=learning_rate,
                 batch_size=batch_size,
                 weight_scale=weight_scale,
                 online_learning_rate=online_learning_rate or learning_rate,
                 online_batch_size=online_batch_size,
+                target_online_epochs=target_online_epochs,
                 annealing_settings=annealing_settings,
                 neighborhood_operations=_suite_neighborhood_operations(request.exp, suite_config),
                 no_plots=request.no_plots,
@@ -242,6 +260,7 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
             {
                 "config_path": str(lr_dir / "config.json"),
                 "summary_path": str(summary_path),
+                "seed_manifest_path": str(lr_dir / "seed_manifest.csv"),
                 "run_count": count,
                 "runs_dir": str(lr_dir / "runs"),
                 "plots_single_dir": str(lr_dir / "plots_single"),
@@ -259,58 +278,19 @@ def run_experiment_suite(request: ExperimentSuiteRequest) -> ExperimentSuiteResu
     _write_csv(aggregate_summary, all_summary_rows)
     if not request.no_plots:
         _write_aggregate_plots(aggregate_dir, all_summary_rows)
-        if request.exp in {"online-delta", "swap-ablation"}:
-            build_online_delta_report(output_dir, aggregate_dir)
+    if request.exp in {"online-delta", "swap-ablation"}:
+        build_online_delta_report(
+            output_dir,
+            aggregate_dir,
+            include_plots=not request.no_plots,
+        )
 
     return ExperimentSuiteResult(
         output_dir=output_dir,
         learning_rates=tuple(learning_rates),
         run_count=run_count,
         summary_path=aggregate_summary,
-    )
-
-
-def _run_all_suite(
-    output_dir: Path,
-    *,
-    benchmark: str,
-    hidden_sizes: tuple[int, ...],
-    run_indices: tuple[int, ...],
-    epochs: int,
-    learning_rate: float,
-    batch_size: int,
-    weight_scale: float,
-    no_plots: bool,
-    include_test_metrics: bool,
-) -> tuple[list[dict[str, object]], int]:
-    candidates = tuple(
-        LayoutCandidate(f"all_{activation_name}", activation_name)
-        for activation_name in SUPPORTED_ACTIVATIONS
-    )
-    result = run_layout_evaluation(
-        LayoutEvaluationRequest(
-            dataset_config=DatasetConfig(name=benchmark, random_state=DEFAULT_RANDOM_SEED),
-            hidden_sizes=hidden_sizes,
-            candidates=candidates,
-            seeds=run_indices,
-            training_config=TrainingConfig(
-                epochs=epochs,
-                learning_rate=learning_rate,
-                batch_size=batch_size,
-                random_state=DEFAULT_RANDOM_SEED,
-            ),
-            weight_scale=weight_scale,
-            primary_metric="validation_loss",
-            include_test_metrics=include_test_metrics,
-        )
-    )
-    return _persist_layout_evaluation(
-        output_dir,
-        experiment_id="E1_all_single_af",
-        benchmark=benchmark,
-        learning_rate=learning_rate,
-        result_payload=layout_evaluation_to_dict(result),
-        no_plots=no_plots,
+        evaluation_profile_name=evaluation_profile_name,
     )
 
 
@@ -320,7 +300,7 @@ def _run_random_baseline_suite(
     experiment_id: str,
     benchmark: str,
     hidden_sizes: tuple[int, ...],
-    run_indices: tuple[int, ...],
+    run_coordinates: tuple[RunCoordinate, ...],
     epochs: int,
     learning_rate: float,
     batch_size: int,
@@ -334,15 +314,20 @@ def _run_random_baseline_suite(
     runs_dir.mkdir(parents=True, exist_ok=True)
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    for run_index in run_indices:
-        layout_seed = int(run_index)
-        training_seed = int(run_index)
-        layout_spec = random_layout_spec(hidden_sizes, layout_seed)
+    for coordinate in run_coordinates:
+        schedule = build_seed_schedule(
+            benchmark,
+            coordinate.layout_index,
+            coordinate.replicate_index,
+        )
+        layout_spec = random_layout_spec(hidden_sizes, schedule.layout_seed)
         run_payload = _train_layout_once(
             benchmark=benchmark,
             hidden_sizes=hidden_sizes,
             layout_spec=layout_spec,
-            seed=training_seed,
+            data_split_seed=schedule.data_split_seed,
+            weight_seed=schedule.retraining_weight_seed,
+            batch_seed=schedule.retraining_batch_seed,
             epochs=epochs,
             learning_rate=learning_rate,
             batch_size=batch_size,
@@ -357,10 +342,12 @@ def _run_random_baseline_suite(
                 learning_rate=learning_rate,
                 label=label,
                 layout_spec=str(run_payload["layout_spec"]),
-                seed=training_seed,
+                seed=schedule.retraining_weight_seed,
                 evaluation_type="retrained",
                 metrics=run_payload["metrics"],  # type: ignore[arg-type]
-                layout_seed=layout_seed,
+                layout_seed=schedule.layout_seed,
+                layout_index=coordinate.layout_index,
+                replicate_index=coordinate.replicate_index,
             )
         )
         payload = {
@@ -369,20 +356,24 @@ def _run_random_baseline_suite(
             "benchmark": benchmark,
             "learning_rate": learning_rate,
             "label": label,
-            "layout_seed": layout_seed,
-            "training_seed": training_seed,
+            "run_id": coordinate.run_id,
+            "layout_index": coordinate.layout_index,
+            "replicate_index": coordinate.replicate_index,
+            "seeds": schedule.to_dict(),
+            "layout_seed": schedule.layout_seed,
+            "training_seed": schedule.retraining_weight_seed,
             **run_payload,
         }
-        run_path = runs_dir / f"random_baseline_run_{run_index:04d}.json"
+        run_path = runs_dir / f"random_baseline_{coordinate.run_id}.json"
         _write_json(run_path, payload)
         if not no_plots:
             _plot_training_history(
-                plots_dir / f"random_baseline_run_{run_index:04d}.png",
+                plots_dir / f"random_baseline_{coordinate.run_id}.png",
                 label,
                 run_payload["history"],
             )
 
-    return _aggregate_summary_rows(rows), len(run_indices)
+    return _aggregate_summary_rows(rows), len(run_coordinates)
 
 
 def _run_online_delta_suite(
@@ -391,42 +382,47 @@ def _run_online_delta_suite(
     experiment_id: str,
     benchmark: str,
     hidden_sizes: tuple[int, ...],
-    run_indices: tuple[int, ...],
+    run_coordinates: tuple[RunCoordinate, ...],
     epochs: int,
     learning_rate: float,
     batch_size: int,
     weight_scale: float,
     online_learning_rate: float,
     online_batch_size: int,
-    annealing_settings: dict[str, float | int],
+    annealing_settings: dict[str, float | int | str],
     neighborhood_operations: tuple[str, ...],
+    target_online_epochs: float | None,
     no_plots: bool,
     export_layout_frames: bool,
     include_test_metrics: bool,
 ) -> tuple[list[dict[str, object]], int]:
     rows: list[dict[str, object]] = []
-    train_cache: dict[tuple[int, str, int, float, bool], dict[str, object]] = {}
+    train_cache: dict[tuple[int, int, int, str, int, float, bool], dict[str, object]] = {}
 
     runs_dir = output_dir / "runs"
     plots_dir = output_dir / "plots_single"
     runs_dir.mkdir(parents=True, exist_ok=True)
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    for run_index in run_indices:
-        layout_seed = int(run_index)
-        training_seed = int(run_index)
-        start_layout_spec = random_layout_spec(hidden_sizes, layout_seed)
+    for coordinate in run_coordinates:
+        schedule = build_seed_schedule(
+            benchmark,
+            coordinate.layout_index,
+            coordinate.replicate_index,
+        )
+        start_layout_spec = random_layout_spec(hidden_sizes, schedule.layout_seed)
         snapshot = _run_online_sa(
             benchmark=benchmark,
             hidden_sizes=hidden_sizes,
             start_layout_spec=start_layout_spec,
-            seed=training_seed,
+            schedule=schedule,
             epochs=epochs,
             learning_rate=online_learning_rate,
             batch_size=online_batch_size,
             weight_scale=weight_scale,
             annealing_settings=annealing_settings,
             neighborhood_operations=neighborhood_operations,
+            target_online_epochs=target_online_epochs,
             include_test_metrics=include_test_metrics,
         )
         if snapshot.best_evaluation is None or snapshot.current_evaluation is None:
@@ -435,10 +431,6 @@ def _run_online_delta_suite(
         final_comparisons: list[dict[str, object]] = []
         comparison_layouts = [
             ("same_random_start_retrained", start_layout_spec),
-            (
-                "best_layout_from_sa_retrained",
-                snapshot.best_evaluation.layout.to_compact_spec(),
-            ),
             (
                 "end_layout_from_sa_retrained",
                 snapshot.current_evaluation.layout.to_compact_spec(),
@@ -451,7 +443,9 @@ def _run_online_delta_suite(
                 benchmark=benchmark,
                 hidden_sizes=hidden_sizes,
                 layout_spec=layout_spec,
-                seed=training_seed,
+                data_split_seed=schedule.data_split_seed,
+                weight_seed=schedule.retraining_weight_seed,
+                batch_seed=schedule.retraining_batch_seed,
                 epochs=epochs,
                 learning_rate=learning_rate,
                 batch_size=batch_size,
@@ -466,31 +460,23 @@ def _run_online_delta_suite(
                     learning_rate=learning_rate,
                     label=label,
                     layout_spec=str(run_payload["layout_spec"]),
-                    seed=training_seed,
+                    seed=schedule.retraining_weight_seed,
                     evaluation_type="retrained",
                     metrics=run_payload["metrics"],  # type: ignore[arg-type]
-                    layout_seed=layout_seed,
+                    layout_seed=schedule.layout_seed,
+                    layout_index=coordinate.layout_index,
+                    replicate_index=coordinate.replicate_index,
                 )
             )
 
         inherited_payloads = [
             (
-                "best_inherited_model_from_sa",
+                "best_online_delta_value",
                 snapshot.best_evaluation.layout.to_compact_spec(),
                 _evaluate_model_state(
                     benchmark,
                     snapshot.best_evaluation.trained_model.to_state_dict(),
-                    training_seed,
-                    include_test_metrics=include_test_metrics,
-                ),
-            ),
-            (
-                "end_inherited_model_from_sa",
-                snapshot.current_evaluation.layout.to_compact_spec(),
-                _evaluate_model_state(
-                    benchmark,
-                    snapshot.current_evaluation.trained_model.to_state_dict(),
-                    training_seed,
+                    schedule.data_split_seed,
                     include_test_metrics=include_test_metrics,
                 ),
             ),
@@ -500,7 +486,7 @@ def _run_online_delta_suite(
                 {
                     "label": label,
                     "layout_spec": layout_spec,
-                    "seed": training_seed,
+                    "seed": schedule.online_weight_seed,
                     "evaluation_type": "inherited",
                     "metrics": metrics,
                     "history": {},
@@ -513,21 +499,28 @@ def _run_online_delta_suite(
                     learning_rate=learning_rate,
                     label=label,
                     layout_spec=layout_spec,
-                    seed=training_seed,
+                    seed=schedule.online_weight_seed,
                     evaluation_type="inherited",
                     metrics=metrics,
-                    layout_seed=layout_seed,
+                    layout_seed=schedule.layout_seed,
+                    layout_index=coordinate.layout_index,
+                    replicate_index=coordinate.replicate_index,
                 )
             )
 
         run_payload = {
             "kind": "experiment_suite_online_delta_run",
+            "schema_version": 2,
             "experiment_id": experiment_id,
             "benchmark": benchmark,
-            "run_index": run_index,
-            "seed": training_seed,
-            "training_seed": training_seed,
-            "layout_seed": layout_seed,
+            "run_index": coordinate.layout_index * 1000 + coordinate.replicate_index,
+            "run_id": coordinate.run_id,
+            "layout_index": coordinate.layout_index,
+            "replicate_index": coordinate.replicate_index,
+            "seeds": schedule.to_dict(),
+            "seed": schedule.online_weight_seed,
+            "training_seed": schedule.retraining_weight_seed,
+            "layout_seed": schedule.layout_seed,
             "learning_rate": learning_rate,
             "batch_size": batch_size,
             "weight_scale": weight_scale,
@@ -535,15 +528,17 @@ def _run_online_delta_suite(
             "online_batch_size": online_batch_size,
             "neighborhood_operations": list(neighborhood_operations),
             "start_layout": start_layout_spec,
-            "best_layout": snapshot.best_evaluation.layout.to_compact_spec(),
+            "diagnostic_best_layout": snapshot.best_evaluation.layout.to_compact_spec(),
             "end_layout": snapshot.current_evaluation.layout.to_compact_spec(),
             "accepted_steps": snapshot.accepted_steps,
+            "trained_batch_updates": snapshot.trained_batch_updates,
+            "effective_online_epochs": snapshot.effective_online_epochs,
             "acceptance_rate": snapshot.acceptance_rate,
             "neighbor_counts": _neighbor_counts(snapshot),
             "online_history": _online_history_to_dict(snapshot),
             "final_comparisons": final_comparisons,
         }
-        run_id = f"{experiment_id}_run_{run_index:04d}"
+        run_id = f"{experiment_id}_{coordinate.run_id}"
         run_path = runs_dir / f"{run_id}.json"
         _write_json(run_path, run_payload)
         if not no_plots:
@@ -559,96 +554,18 @@ def _run_online_delta_suite(
                 export_frames=export_layout_frames,
             )
 
-    return _aggregate_summary_rows(rows), len(run_indices)
-
-
-def _persist_layout_evaluation(
-    output_dir: Path,
-    *,
-    experiment_id: str,
-    benchmark: str,
-    learning_rate: float,
-    result_payload: dict[str, object],
-    no_plots: bool,
-) -> tuple[list[dict[str, object]], int]:
-    runs_dir = output_dir / "runs"
-    plots_dir = output_dir / "plots_single"
-    runs_dir.mkdir(parents=True, exist_ok=True)
-    plots_dir.mkdir(parents=True, exist_ok=True)
-
-    runs = list(result_payload.get("runs", []))
-    for run in runs:
-        if not isinstance(run, dict):
-            continue
-        safe_label = _safe_name(str(run.get("label", "run")))
-        seed = int(run.get("seed", 0))
-        run_path = runs_dir / f"{safe_label}_seed_{seed:04d}.json"
-        _write_json(
-            run_path,
-            {
-                "kind": "experiment_suite_run",
-                "experiment_id": experiment_id,
-                "benchmark": benchmark,
-                "learning_rate": learning_rate,
-                **run,
-            },
-        )
-        if not no_plots:
-            _plot_training_history(
-                plots_dir / f"{safe_label}_seed_{seed:04d}.png",
-                str(run.get("label", "")),
-                run.get("history", {}),
-            )
-
-    summary_rows = []
-    for item in sorted(
-        result_payload.get("aggregated", []),
-        key=lambda value: float(value.get("ranking_score", 0.0)) if isinstance(value, dict) else 0.0,
-    ):
-        if not isinstance(item, dict):
-            continue
-        metrics = item.get("mean_metrics", {})
-        std_metrics = item.get("std_metrics", {})
-        if not isinstance(metrics, dict):
-            continue
-        summary_row = {
-                "experiment_id": experiment_id,
-                "benchmark": benchmark,
-                "learning_rate": learning_rate,
-                "label": item.get("label", ""),
-                "layout_spec": item.get("layout_spec", ""),
-                "evaluation_type": item.get("evaluation_type", "retrained"),
-                "num_runs": item.get("num_runs", ""),
-                "mean_train_loss": metrics.get("train_loss", ""),
-                "std_train_loss": _dict_get(std_metrics, "train_loss"),
-                "mean_val_loss": metrics.get("val_loss", ""),
-                "std_val_loss": _dict_get(std_metrics, "val_loss"),
-                "mean_train_accuracy": metrics.get("train_accuracy", ""),
-                "std_train_accuracy": _dict_get(std_metrics, "train_accuracy"),
-                "mean_val_accuracy": metrics.get("val_accuracy", ""),
-                "std_val_accuracy": _dict_get(std_metrics, "val_accuracy"),
-                "ranking_score": item.get("ranking_score", ""),
-            }
-        if "test_loss" in metrics:
-            summary_row.update(
-                {
-                    "mean_test_loss": metrics["test_loss"],
-                    "std_test_loss": _dict_get(std_metrics, "test_loss"),
-                    "mean_test_accuracy": metrics["test_accuracy"],
-                    "std_test_accuracy": _dict_get(std_metrics, "test_accuracy"),
-                }
-            )
-        summary_rows.append(summary_row)
-    return summary_rows, len(runs)
+    return _aggregate_summary_rows(rows), len(run_coordinates)
 
 
 def _cached_training_run(
-    cache: dict[tuple[int, str, int, float, bool], dict[str, object]],
+    cache: dict[tuple[int, int, int, str, int, float, bool], dict[str, object]],
     *,
     benchmark: str,
     hidden_sizes: tuple[int, ...],
     layout_spec: str,
-    seed: int,
+    data_split_seed: int,
+    weight_seed: int,
+    batch_seed: int,
     epochs: int,
     learning_rate: float,
     batch_size: int,
@@ -657,13 +574,23 @@ def _cached_training_run(
 ) -> dict[str, object]:
     layout = parse_layout_spec(layout_spec, hidden_sizes)
     normalized_spec = layout.to_compact_spec()
-    cache_key = (seed, normalized_spec, batch_size, weight_scale, include_test_metrics)
+    cache_key = (
+        data_split_seed,
+        weight_seed,
+        batch_seed,
+        normalized_spec,
+        batch_size,
+        weight_scale,
+        include_test_metrics,
+    )
     if cache_key not in cache:
         cache[cache_key] = _train_layout_once(
             benchmark=benchmark,
             hidden_sizes=hidden_sizes,
             layout_spec=normalized_spec,
-            seed=seed,
+            data_split_seed=data_split_seed,
+            weight_seed=weight_seed,
+            batch_seed=batch_seed,
             epochs=epochs,
             learning_rate=learning_rate,
             batch_size=batch_size,
@@ -678,14 +605,16 @@ def _train_layout_once(
     benchmark: str,
     hidden_sizes: tuple[int, ...],
     layout_spec: str,
-    seed: int,
+    data_split_seed: int,
+    weight_seed: int,
+    batch_seed: int,
     epochs: int,
     learning_rate: float,
     batch_size: int,
     weight_scale: float,
     include_test_metrics: bool,
 ) -> dict[str, object]:
-    dataset = load_benchmark(DatasetConfig(name=benchmark, random_state=seed))
+    dataset = load_benchmark(DatasetConfig(name=benchmark, random_state=data_split_seed))
     layout = parse_layout_spec(layout_spec, hidden_sizes)
     model = ModularMLP(
         input_size=dataset.input_size,
@@ -694,7 +623,7 @@ def _train_layout_once(
         layout=layout,
         num_classes=dataset.output_size,
         weight_scale=weight_scale,
-        random_state=seed,
+        random_state=weight_seed,
     )
     training_result = train_model(
         model,
@@ -703,13 +632,16 @@ def _train_layout_once(
             epochs=epochs,
             learning_rate=learning_rate,
             batch_size=batch_size,
-            random_state=seed,
+            random_state=batch_seed,
         ),
         include_test_metrics=include_test_metrics,
     )
     return {
         "layout_spec": layout.to_compact_spec(),
-        "seed": seed,
+        "seed": weight_seed,
+        "data_split_seed": data_split_seed,
+        "weight_seed": weight_seed,
+        "batch_seed": batch_seed,
         "evaluation_type": "retrained",
         "metrics": _training_metrics(training_result),
         "history": training_result.history,
@@ -722,28 +654,29 @@ def _run_online_sa(
     benchmark: str,
     hidden_sizes: tuple[int, ...],
     start_layout_spec: str,
-    seed: int,
+    schedule: SeedSchedule,
     epochs: int,
     learning_rate: float,
     batch_size: int,
     weight_scale: float,
-    annealing_settings: dict[str, float | int],
+    annealing_settings: dict[str, float | int | str],
     neighborhood_operations: tuple[str, ...],
+    target_online_epochs: float | None,
     include_test_metrics: bool,
 ) -> OnlineAnnealingSnapshot:
     request = OnlineAnnealingRequest(
-        dataset_config=DatasetConfig(name=benchmark, random_state=seed),
+        dataset_config=DatasetConfig(name=benchmark, random_state=schedule.data_split_seed),
         hidden_sizes=hidden_sizes,
         layout_spec=start_layout_spec,
         training_config=TrainingConfig(
             epochs=epochs,
             learning_rate=learning_rate,
             batch_size=batch_size,
-            random_state=seed,
+            random_state=schedule.online_batch_seed,
         ),
         annealing_config=AnnealingConfig(
             start_temperature=float(annealing_settings["start_temperature"]),
-            cooling_schedule=DEFAULT_ANNEALING_COOLING_SCHEDULE,
+            cooling_schedule=str(annealing_settings["cooling_schedule"]),
             cooling_parameter=float(annealing_settings["cooling_parameter"]),
             iterations_per_temperature=int(annealing_settings["iterations_per_temperature"]),
             max_steps=int(annealing_settings["max_steps"]),
@@ -751,8 +684,12 @@ def _run_online_sa(
             neighborhood_operations=neighborhood_operations,
         ),
         weight_scale=weight_scale,
-        random_state=seed,
-        include_test_metrics=include_test_metrics,
+        random_state=schedule.online_weight_seed,
+        weight_seed=schedule.online_weight_seed,
+        batch_seed=schedule.online_batch_seed,
+        proposal_seed=schedule.sa_proposal_seed,
+        acceptance_seed=schedule.sa_acceptance_seed,
+        target_online_epochs=target_online_epochs,
     )
     session = create_online_session(request)
     return online_run_to_completion(session, language="en")
@@ -814,6 +751,8 @@ def _summary_row_from_metrics(
     evaluation_type: str,
     metrics: dict[str, float],
     layout_seed: int | None,
+    layout_index: int | None = None,
+    replicate_index: int | None = None,
 ) -> dict[str, object]:
     row = {
         "experiment_id": experiment_id,
@@ -823,6 +762,8 @@ def _summary_row_from_metrics(
         "layout_spec": layout_spec,
         "seed": seed,
         "layout_seed": "" if layout_seed is None else layout_seed,
+        "layout_index": "" if layout_index is None else layout_index,
+        "replicate_index": "" if replicate_index is None else replicate_index,
         "evaluation_type": evaluation_type,
         "train_loss": metrics["train_loss"],
         "val_loss": metrics["val_loss"],
@@ -853,6 +794,8 @@ def _aggregate_summary_rows(rows: list[dict[str, object]]) -> list[dict[str, obj
     aggregate_rows: list[dict[str, object]] = []
     for (_, _, _, _), group in grouped.items():
         first = group[0]
+        layout_specs = {str(row["layout_spec"]) for row in group}
+        layout_indices = {row["layout_index"] for row in group}
         metric_arrays = {
             metric: np.asarray([float(row[metric]) for row in group], dtype=np.float64)
             for metric in ("train_loss", "val_loss", "train_accuracy", "val_accuracy")
@@ -869,9 +812,15 @@ def _aggregate_summary_rows(rows: list[dict[str, object]]) -> list[dict[str, obj
                 "benchmark": first["benchmark"],
                 "learning_rate": first["learning_rate"],
                 "label": first["label"],
-                "layout_spec": first["layout_spec"],
+                "layout_spec": (
+                    first["layout_spec"]
+                    if len(layout_specs) == 1
+                    else f"various_layout_specs:{len(layout_specs)}"
+                ),
                 "evaluation_type": first["evaluation_type"],
                 "num_runs": len(group),
+                "num_layouts": len(layout_indices),
+                "replicates_per_layout": len(group) / max(len(layout_indices), 1),
                 "mean_train_loss": float(metric_arrays["train_loss"].mean()),
                 "std_train_loss": float(metric_arrays["train_loss"].std(ddof=0)),
                 "mean_val_loss": float(metric_arrays["val_loss"].mean()),
@@ -1049,6 +998,10 @@ def _online_history_to_dict(snapshot: OnlineAnnealingSnapshot) -> list[dict[str,
                 "neighbor_label": "start",
                 "batch_loss_before": float(snapshot.start_evaluation.objective_value),
                 "candidate_loss_after": float(snapshot.start_evaluation.objective_value),
+                "post_training_batch_loss": float(snapshot.start_evaluation.objective_value),
+                "trained_batch_updates_after_step": 0,
+                "effective_online_epochs_after_step": 0.0,
+                "diagnostics_refreshed": True,
                 "validation_loss_after_update": float(snapshot.start_evaluation.val_loss),
                 "train_loss": float(snapshot.start_evaluation.train_loss),
                 "val_accuracy": float(snapshot.start_evaluation.val_accuracy),
@@ -1067,6 +1020,10 @@ def _online_history_to_dict(snapshot: OnlineAnnealingSnapshot) -> list[dict[str,
             "neighbor_label": step.neighbor_label,
             "batch_loss_before": step.batch_loss_before,
             "candidate_loss_after": step.candidate_loss_after,
+            "post_training_batch_loss": step.post_training_batch_loss,
+            "trained_batch_updates_after_step": step.trained_batch_updates_after_step,
+            "effective_online_epochs_after_step": step.effective_online_epochs_after_step,
+            "diagnostics_refreshed": step.diagnostics_refreshed,
             "validation_loss_after_update": step.validation_loss_after_update,
             "train_loss": float(step.previous_evaluation.train_loss),
             "val_accuracy": float(step.previous_evaluation.val_accuracy),
@@ -1087,14 +1044,21 @@ def _neighbor_counts(snapshot: OnlineAnnealingSnapshot) -> dict[str, int]:
     return counts
 
 
-def _resolve_run_indices(
+def _resolve_run_coordinates(
     request: ExperimentSuiteRequest,
     suite_config: dict[str, Any],
-) -> tuple[int, ...]:
-    run_count = request.run_count or int(suite_config["defaults"]["run_count"])
-    if run_count <= 0:
-        raise ValueError("--runs muss positiv sein.")
-    return tuple(range(run_count))
+) -> tuple[RunCoordinate, ...]:
+    if request.run_count is not None:
+        if request.layout_count is not None or request.replicate_count is not None:
+            raise ValueError("--runs darf nicht mit --layouts oder --replicates kombiniert werden.")
+        if request.run_count <= 0:
+            raise ValueError("--runs muss positiv sein.")
+        return build_run_coordinates(request.run_count, 1)
+
+    defaults = suite_config["defaults"]
+    layout_count = request.layout_count or int(defaults.get("layout_count", 10))
+    replicate_count = request.replicate_count or int(defaults.get("replicate_count", 3))
+    return build_run_coordinates(layout_count, replicate_count)
 
 
 def _resolve_learning_rates(
@@ -1113,13 +1077,21 @@ def _resolve_annealing_settings(
     request: ExperimentSuiteRequest,
     suite_config: dict[str, Any],
     evaluation_profile: dict[str, Any] | None = None,
-) -> dict[str, float | int]:
+) -> dict[str, float | int | str]:
     defaults = suite_config.get("defaults", {})
     configured = defaults.get("annealing", {}) if isinstance(defaults, dict) else {}
     if not isinstance(configured, dict):
         configured = {}
     profile = evaluation_profile or {}
-    settings: dict[str, float | int] = {
+    settings: dict[str, float | int | str] = {
+        "cooling_schedule": request.cooling_schedule
+        if request.cooling_schedule is not None
+        else str(
+            profile.get(
+                "cooling_schedule",
+                configured.get("cooling_schedule", DEFAULT_ANNEALING_COOLING_SCHEDULE),
+            )
+        ),
         "start_temperature": request.start_temperature
         if request.start_temperature is not None
         else float(
@@ -1161,7 +1133,7 @@ def _resolve_annealing_settings(
     }
     AnnealingConfig(
         start_temperature=float(settings["start_temperature"]),
-        cooling_schedule=DEFAULT_ANNEALING_COOLING_SCHEDULE,
+        cooling_schedule=str(settings["cooling_schedule"]),
         cooling_parameter=float(settings["cooling_parameter"]),
         iterations_per_temperature=int(settings["iterations_per_temperature"]),
         max_steps=int(settings["max_steps"]),
@@ -1216,17 +1188,9 @@ def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
-def _safe_name(value: str) -> str:
-    return "".join(character if character.isalnum() or character in "-_" else "_" for character in value)
-
-
 def _learning_rate_dir_name(value: float) -> str:
     return f"learning_rate_{value:.3f}"
 
 
 def _format_topology(input_size: int, hidden_sizes: tuple[int, ...], output_size: int) -> str:
     return "-".join(str(value) for value in (input_size, *hidden_sizes, output_size))
-
-
-def _dict_get(value: object, key: str) -> object:
-    return value.get(key, "") if isinstance(value, dict) else ""

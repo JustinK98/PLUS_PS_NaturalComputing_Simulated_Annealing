@@ -23,6 +23,7 @@ def run_hyperparameter_tuning_command(args) -> None:
             resume=Path(args.resume) if args.resume else None,
             smoke=args.smoke,
             export_layout_frames=args.export_layout_frames,
+            import_training_from=Path(args.import_training_from) if args.import_training_from else None,
         )
     )
     print(f"tuning:     {args.profile}")

@@ -1,10 +1,128 @@
 {
-  "default_profile": "tuned_20260530",
+  "default_profile": "mayer_corrected_20260604",
   "profiles": {
+    "mayer_corrected_20260604": {
+      "description": "Reviewed Mayer-corrected Online-Delta-SA profile from the 2026-06-02 downstream tuning checkpoint.",
+      "source_artifact": "outputs/hyperparameter_tuning/20260602_122626_mayer-corrected",
+      "status": "reviewed_mayer_corrected_v1",
+      "evaluation_design": {
+        "layout_count": 10,
+        "replicate_count": 3,
+        "comparison": "paired_random_start_vs_final_sa_layout",
+        "seed_schedule": "independent_streams_v1",
+        "confirmation_status": "rerun_required_after_seed_separation"
+      },
+      "benchmarks": {
+        "two_moons": {
+          "training": {
+            "learning_rate": 0.2,
+            "epochs": 400,
+            "batch_size": 64,
+            "weight_scale": 2.0
+          },
+          "online_delta": {
+            "start_temperature": 0.024243546321383213,
+            "cooling_parameter": 0.999,
+            "iterations_per_temperature": 10,
+            "max_steps": 12500,
+            "min_temperature": 0.00024243546321383214,
+            "online_learning_rate": 0.2,
+            "online_batch_size": 128,
+            "target_online_epochs": 250.0
+          },
+          "confirmation": {
+            "runs": 30,
+            "acceptance_rate": 0.663032,
+            "effective_online_epochs_mean": 1657.58,
+            "end_layout_retrained_mean_val_loss": 0.08847106202885796,
+            "end_layout_retrained_std_val_loss": 0.023090960583747492,
+            "end_layout_retrained_mean_test_loss": 0.0388218434650096,
+            "end_layout_retrained_mean_test_accuracy": 0.9894999999999998,
+            "paired_mean_val_loss_improvement": 0.0022453528590756027,
+            "paired_win_rate": 0.5,
+            "random_baseline_mean_val_loss": 0.09071641488793356,
+            "random_baseline_mean_val_accuracy": 0.9652083333333333,
+            "result": "weak_positive",
+            "interpretation": "Online-Delta slightly improves the matched random start on mean Validation-Loss, but the effect is small."
+          }
+        },
+        "concentric_circles": {
+          "training": {
+            "learning_rate": 0.02,
+            "epochs": 400,
+            "batch_size": 16,
+            "weight_scale": 0.5
+          },
+          "online_delta": {
+            "start_temperature": 0.0039017406212327353,
+            "cooling_parameter": 0.9975,
+            "iterations_per_temperature": 25,
+            "max_steps": 50000,
+            "min_temperature": 0.000039017406212327355,
+            "online_learning_rate": 0.04,
+            "online_batch_size": 32,
+            "target_online_epochs": 250.0
+          },
+          "confirmation": {
+            "runs": 30,
+            "acceptance_rate": 0.48183550724637686,
+            "effective_online_epochs_mean": 1108.221667,
+            "end_layout_retrained_mean_val_loss": 0.028234550836210622,
+            "end_layout_retrained_std_val_loss": 0.0176054479376294,
+            "end_layout_retrained_mean_test_loss": 0.024972858996622653,
+            "end_layout_retrained_mean_test_accuracy": 0.9868333333333332,
+            "paired_mean_val_loss_improvement": 0.0013759788794127817,
+            "paired_win_rate": 0.4666666666666667,
+            "random_baseline_mean_val_loss": 0.029610529715623404,
+            "random_baseline_mean_val_accuracy": 0.989375,
+            "result": "near_neutral_positive_mean",
+            "interpretation": "Online-Delta gives a very small mean Validation-Loss improvement on an already saturated benchmark; this is not a strong practical advantage."
+          }
+        },
+        "crossing_spirals": {
+          "training": {
+            "learning_rate": 0.1,
+            "epochs": 1500,
+            "batch_size": 8,
+            "weight_scale": 0.75,
+            "stop_rule": {
+              "max_mean_val_loss": 0.65,
+              "min_mean_val_accuracy": 0.6
+            },
+            "stop_rule_passed": true
+          },
+          "online_delta": {
+            "start_temperature": 0.002464043181734257,
+            "cooling_parameter": 0.99,
+            "iterations_per_temperature": 5,
+            "max_steps": 2500,
+            "min_temperature": 0.00002464043181734257,
+            "online_learning_rate": 0.2,
+            "online_batch_size": 64,
+            "target_online_epochs": 25.0
+          },
+          "confirmation": {
+            "runs": 30,
+            "acceptance_rate": 0.5856790123456791,
+            "effective_online_epochs_mean": 134.413333,
+            "end_layout_retrained_mean_val_loss": 0.6890149349257734,
+            "end_layout_retrained_std_val_loss": 0.15517739932479405,
+            "end_layout_retrained_mean_test_loss": 0.645845197596167,
+            "end_layout_retrained_mean_test_accuracy": 0.7391666666666666,
+            "paired_mean_val_loss_improvement": -0.02675874816391991,
+            "paired_win_rate": 0.4666666666666667,
+            "random_baseline_mean_val_loss": 0.6622561867618535,
+            "random_baseline_mean_val_accuracy": 0.7535416666666667,
+            "result": "negative",
+            "interpretation": "The tuned SGD setup can learn parts of crossing_spirals, but Online-Delta degrades the matched random baseline on average. Do not claim a positive SA result for this benchmark."
+          }
+        }
+      }
+    },
     "tuned_20260530": {
-      "description": "Validation-selected evaluation parameters from the staged overnight tuning pipeline.",
+      "description": "Legacy parameters from the pre-Mayer-correction tuning pipeline. Retained only for provenance.",
       "source_artifact": "outputs/hyperparameter_tuning/20260530_143043_overnight",
-      "status": "evaluation_fixed",
+      "status": "legacy_methodology_v1",
       "benchmarks": {
         "two_moons": {
           "training": {

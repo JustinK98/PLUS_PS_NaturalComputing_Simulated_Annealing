@@ -17,6 +17,7 @@ from services.online_annealing_training_service import (
     online_step_once,
 )
 from ui_qt.widgets.annealing_history_panel import AnnealingHistoryPanel
+from ui_qt.widgets.plot_widgets import _adaptive_smoothing_window, _rolling_median
 
 
 def _app() -> QtWidgets.QApplication:
@@ -81,13 +82,19 @@ class AnnealingPanelsQtTests(unittest.TestCase):
 
         self.assertIn("before=", history.text.toPlainText())
         self.assertEqual(len(history.plot.figure.axes), 3)
-        self.assertEqual(history.plot.figure.axes[0].get_title(), "Online-Delta Batch-Loss")
+        self.assertEqual(
+            history.plot.figure.axes[0].get_title(),
+            "Online-Delta Batch-Loss (Rohpunkte + rollender Median)",
+        )
+        batch_labels = history.plot.figure.axes[0].get_legend_handles_labels()[1]
+        self.assertIn("vorher, Median 1", batch_labels)
+        self.assertIn("Kandidat, Median 1", batch_labels)
         validation_labels = [
             line.get_label()
             for line in history.plot.figure.axes[1].lines
         ]
-        self.assertEqual(validation_labels.count("aktueller Val-Loss"), 1)
-        self.assertEqual(validation_labels.count("bester Val-Loss"), 1)
+        self.assertEqual(validation_labels.count("aktueller Val-Loss (Diagnose)"), 1)
+        self.assertEqual(validation_labels.count("diagnostisch bester Val-Loss"), 1)
         history.close()
 
     def test_history_panel_uses_online_delta_axes_before_first_step(self) -> None:
@@ -115,10 +122,24 @@ class AnnealingPanelsQtTests(unittest.TestCase):
         self.app.processEvents()
 
         self.assertEqual(len(history.plot.figure.axes), 3)
-        self.assertEqual(history.plot.figure.axes[0].get_title(), "Online-Delta Batch-Loss")
-        self.assertEqual(history.plot.figure.axes[1].get_title(), "Validation-Loss waehrend der Suche")
+        self.assertEqual(
+            history.plot.figure.axes[0].get_title(),
+            "Online-Delta Batch-Loss (Rohpunkte + rollender Median)",
+        )
+        self.assertEqual(history.plot.figure.axes[1].get_title(), "Validation-Loss-Diagnose waehrend der Suche")
         self.assertEqual(history.plot.figure.axes[2].get_title(), "Temperatur")
         history.close()
+
+    def test_batch_loss_smoothing_uses_robust_adaptive_median(self) -> None:
+        values = [1.0] * 30
+        values[15] = 100.0
+        window = _adaptive_smoothing_window(len(values))
+
+        smoothed = _rolling_median(values, window)
+
+        self.assertEqual(window, 11)
+        self.assertEqual(len(smoothed), len(values))
+        self.assertEqual(smoothed[15], 1.0)
 
 
 if __name__ == "__main__":

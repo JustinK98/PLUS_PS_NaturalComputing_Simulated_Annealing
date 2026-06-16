@@ -10,6 +10,17 @@ from configs import default_hidden_sizes
 
 
 CONFIG_PATH = Path("configs") / "evaluation_profiles.json"
+DEFAULT_PROFILE_ALIAS = "default"
+
+
+def default_evaluation_profile_name() -> str:
+    """Return the promoted default profile name from the profile registry."""
+
+    payload = _load_payload()
+    profile_name = payload.get("default_profile")
+    if not isinstance(profile_name, str) or not profile_name:
+        raise ValueError("Kein default_profile in configs/evaluation_profiles.json gesetzt.")
+    return profile_name
 
 
 def load_evaluation_benchmark_profile(
@@ -18,12 +29,20 @@ def load_evaluation_benchmark_profile(
 ) -> dict[str, Any]:
     """Load and validate one benchmark entry from a promoted profile."""
 
-    payload = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    payload = _load_payload()
+    if profile_name == DEFAULT_PROFILE_ALIAS:
+        profile_name = default_evaluation_profile_name()
     profiles = payload.get("profiles", {})
     if profile_name not in profiles:
         allowed = ", ".join(sorted(profiles))
         raise ValueError(f"Unbekanntes Evaluationsprofil '{profile_name}'. Erlaubt: {allowed}")
     profile = profiles[profile_name]
+    status = str(profile.get("status", ""))
+    if status.startswith("legacy_"):
+        raise ValueError(
+            f"Evaluationsprofil '{profile_name}' ist als '{status}' archiviert und darf "
+            "nicht fuer neue Auswertungen verwendet werden."
+        )
     benchmarks = profile.get("benchmarks", {})
     if benchmark not in benchmarks:
         raise ValueError(
@@ -58,13 +77,17 @@ def load_evaluation_benchmark_profile(
         "name": profile_name,
         "description": str(profile.get("description", "")),
         "source_artifact": str(profile.get("source_artifact", "")),
-        "status": str(profile.get("status", "")),
+        "status": status,
         "benchmark": benchmark,
         "hidden_sizes": list(default_hidden_sizes(benchmark)),
         "training": training,
         "online_delta": online_delta,
         "confirmation": dict(benchmark_profile.get("confirmation", {})),
     }
+
+
+def _load_payload() -> dict[str, Any]:
+    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
 def _require_dict(

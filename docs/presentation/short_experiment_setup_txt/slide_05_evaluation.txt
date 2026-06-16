@@ -1,0 +1,24 @@
+Slide 5: Evaluation
+
+1. Random baseline
+   The same random start layout is trained normally without SA.
+
+2. Online-Delta inherited model
+   The final model that was continuously trained during the SA search.
+
+3. Best SA layout retrained
+   The best layout found by SA is trained again from random weights.
+
+Important metrics:
+
+- validation loss:
+  main metric for selecting and comparing layouts
+
+- validation accuracy:
+  additional classification signal
+
+- acceptance rate:
+  shows whether SA explores too much, too little, or in a useful range
+
+- activation-function counts:
+  show which activation functions occur in the best layouts

@@ -1,0 +1,17 @@
+Slide 4: Experiment setup
+
+Main Online-Delta-SA setup:
+
+- benchmark topology is fixed
+- start with random weights
+- start with a random mixed activation layout
+- use all six activation functions:
+  ReLU, GELU, sigmoid, tanh, Swish, identity
+- output layer stays sigmoid
+- neighborhood operation: set_neuron only
+- one hidden-neuron activation function is changed per SA step
+- candidate quality is measured with mini-batch BCE
+- training happens only after accepted candidates
+- temperature decreases during the run
+
+The goal is to optimize the activation-function distribution, not the network architecture.

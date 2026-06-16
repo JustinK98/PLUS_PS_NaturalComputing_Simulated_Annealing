@@ -9,9 +9,6 @@ CLI = reproducible scientific experiments
 GUI = focused Online-Delta demonstration
 ```
 
-`main.py` prints help when invoked without arguments. It does not start an
-interactive assistant.
-
 ## Public Commands
 
 ```bash
@@ -71,12 +68,9 @@ interactive explanation of Online-Delta behavior. Multi-run evidence belongs to
 the CLI suites. The selected benchmark determines the fixed Basics topology;
 the GUI no longer exposes workspace routing or topology overrides.
 
-The German-language workspace exposes `demo` and `tuned_20260530` parameter
-profiles, a side-by-side network comparison, and an in-memory SA timeline.
-Accepted candidate changes are outlined in green and rejected changes in red.
-The Timeline detail box replaces the former separate SA delta and decision
-panels. Language selection, expert mode, the short GUI guide, `fill_layer`,
-short-retrain controls, and Builder routing are not part of the visible GUI.
+The workspace exposes `demo` and `tuned_20260530` parameter profiles and an
+in-memory SA timeline. `fill_layer`, short-retrain controls, and Builder routing
+are not part of the visible GUI.
 
 Qt startup:
 
@@ -84,13 +78,6 @@ Qt startup:
 - `ui_qt/shell/main_window.py`
 - `ui_qt/workspaces/activation_workflow_workspace.py`
 
-## Removed Legacy Paths
-
-The historical Interactive Assistant, Experiment Builder, short-retrain runner,
-layout-grid command, old report builder, recipe UI, and their dedicated tests
-have been removed after import review. The core SA implementation now supports
-`set_neuron` and the explicit `swap-ablation`; `fill_layer` and weighted
-candidate-operation selection are no longer runtime mechanisms.
 
 ## Generated Artifacts
 
@@ -101,19 +88,6 @@ series are opt-in:
 python main.py experiment suite --exp online-delta --benchmark two_moons --export-layout-frames
 ```
 
-Cleanup retention rules live in `configs/artifact_retention.json`. The
-non-destructive inventory command is:
-
-```bash
-python scripts/cleanup_inventory.py
-```
-
-The separate apply script remains a dry run unless both `--apply` and its
-explicit confirmation token are passed:
-
-```bash
-python scripts/apply_cleanup_inventory.py
-```
 
 ## Verification
 
