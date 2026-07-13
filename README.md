@@ -1,3 +1,91 @@
+
+
+
+Abstract
+(all) 
+
+(all) 
+Introduction 
+(half page- 1 page) 
+
+( Ziri + Negar connect) --> With questions to Justin if neccessary)
+Background
+(Ziri) 
+--> Introcuction into SA 
+--> Introduction into NNs
+--> Introduction into AFs 
+(forumals, simple explainable, and Ground Sources Basic Machine Learning Literture) 
+(2 Pages) 
+
+Related Work + Methodology (Distinguish from other approaches) 
+(Negar)
+--> Simulated Annealing how it is being used and when?
+--> Is there a paper where they distiguish layout designs?
+--> Is there a Paper where something similar to online Delta is being introduced? 
+--> The role of activation functions for certain benchmarks or problems
+...
+How may we arrange to use that conclusions out of that papers into our project? 
+(1-2 Pages) 
+
+(Justin + Patrick Connect with Questions to Ziri + Negar if neccesary)
+Online Delta 
+(Patrick)
+--> Find common grpund from background and related work, summarize that and descirbe the approach 
+--> Layouts (what is a layout?) 
+--> "We need a benchmark X" and we inprove the difficulty" 
+--> Start Layout, best layout found, end Layout
+--> Comparison
+--> "Pseudo Code Algorithm" 
+--> Optimization Algorithm
+
+(2 pages) 
+
+Experimental Design 
+(Justin) 
+
+
+Results
+(Justin + X)
+--> Description
+--> Metrics
+--> Interpretation of the plots and the results 
+
+(all) 
+Conclusion
+(all + Justin) 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Activation Playground
 
 Qt-only desktop playground for small neural networks with editable activation layouts, stepwise training inspection, and simulated annealing over activation distributions.
